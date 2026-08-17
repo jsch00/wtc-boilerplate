@@ -1,0 +1,5 @@
+# Local machine config — tracked counterpart is .harness-repos.yml
+.harness-repos
+
+# macOS
+.DS_Store

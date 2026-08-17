@@ -1,0 +1,52 @@
+# Worktree Collections — Multi-repo agent harness
+
+A change worth making rarely fits in one repository. The API moves, the
+console follows, the mobile client catches up. Coding agents handle that
+badly for a dull reason: they are pointed at a single checkout, and the work
+is not in a single checkout.
+
+**Worktree collections** are the answer this repository documents. A
+collection is a named folder holding one git worktree per repository in
+scope, all hanging off shared bare clones. An agent started at the collection
+root sees every repository the task touches, at the right revision, at once —
+and a second collection alongside it sees the same repositories at a
+different revision, with no clone duplication and no branch contention.
+
+```text
+<workspace-root>/          # plain folder, NOT a git repo
+  .bare/
+    <repo>.git             # bare owners, cloned from the forge
+  <collection>/            # one folder per task
+    harness/               # this repo's worktree — tools + instructions
+    <repo>/                # siblings, one per repo in scope
+    ext.<repo>/            # unmanaged sibling, owner lives elsewhere
+```
+
+## The load-bearing decisions
+
+- **Bare owners are durable; collections are disposable.** A collection holds
+  no state that is not in git. Deleting one loses nothing, which is what makes
+  it cheap to create one per task.
+- **Siblings rest detached at the development tip.** A branch can only be
+  checked out in one worktree, so branch-per-collection turns the tip into a
+  resource collections queue for. Detached heads let every collection sit on
+  it simultaneously.
+- **The branch is created at the first commit.** A branch named before the
+  work has an identity gets the wrong name — and the name is how work maps
+  back to its issue.
+- **The harness travels inside the collection.** Instructions and tools are a
+  worktree like any other, so the agent's rules are versioned with the code
+  they govern.
+
+## What this repository is
+
+A **reference implementation of the concept**, not a library. There is
+nothing to install and nothing to depend on. The pattern has been built more
+than once, in separate codebases, each time carried over by hand and adapted
+to what that project happened to need. It works; re-deriving it every time
+does not. This repository is where the idea gets maintained in one place
+instead. Read it, take the parts that fit, adapt the rest — the shell tools
+demonstrate the geometry, they are not an API anyone should build against.
+
+Status: seeding. Content is being extracted from a set of working
+implementations, and generalized where they disagree.
