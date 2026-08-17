@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# wtc-browse.sh — open a collection in one LazyVim, one vim tab per repo.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: tools/wtc-browse.sh [options] [<collection>]
+
+Opens LazyVim on a worktree collection: one vim tab per sibling
+(`:tcd` to that repo) so gitsigns / neo-tree / Octo / lazygit see a
+real git root. The multi-repo overview stays in wtc-status.sh.
+
+Where it opens depends on who launched it:
+
+  a terminal (including a herdr shell pane)
+      this window
+  a coding agent inside herdr
+      the workspace `browse` pane (never the agent). Also opens a
+      sibling herdr tab `pr` with gh-dash when that extension is
+      installed.
+
+  <collection>  name under the workspace root (default: this collection)
+  --here        force this terminal, even from an agent pane
+  --session <n> herdr session
+
+Status-pane clicks talk to this nvim over a listen socket
+(/tmp/wtc-browse-<collection>.nvim).
+EOF
+  exit 1
+}
+
+here=no session=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --here) here=yes; shift ;;
+    --session) session="${2:?--session needs a name}"; shift 2 ;;
+    --no-focus) shift ;;
+    -h|--help) usage ;;
+    -*) echo "unknown option: $1" >&2; usage ;;
+    *) break ;;
+  esac
+done
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+HARNESS_DIR="$(dirname "$script_dir")"
+. "$script_dir/lib.sh"
+harness_lib_init
+
+if [ $# -gt 0 ]; then
+  name="$1"
+  collection="$ROOT/$name"
+else
+  collection="$(cd "$HARNESS_DIR/.." && pwd)"
+  name="$(basename "$collection")"
+fi
+[ -d "$collection/harness" ] || {
+  echo "error: $collection is not a collection (no harness/)" >&2
+  exit 1
+}
+
+lua="$script_dir/wtc-browse.lua"
+[ -f "$lua" ] || { echo "error: missing $lua" >&2; exit 1; }
+
+command -v nvim >/dev/null 2>&1 || {
+  echo "error: nvim is not on PATH" >&2
+  exit 1
+}
+
+run_nvim() {
+  cd "$collection"
+  sock="$(wtc_browse_socket "$name")"
+  if ! wtc_browse_alive "$name"; then
+    rm -f "$sock"
+  fi
+  exec nvim --listen "$sock" \
+    -c "lua vim.g.wtc_browse_root = [[$collection]]" \
+    -c "luafile $lua"
+}
+
+if [ "$here" = yes ]; then
+  run_nvim
+fi
+
+if [ "$here" = no ] && herdr_caller_is_agent; then
+  [ -n "$session" ] || session="${HERDR_SESSION:-}"
+  [ -n "$session" ] || session="$(herdr_session_name)"
+  ws="${HERDR_WORKSPACE_ID:-}"
+  if [ -n "$ws" ] && herdr_session_running "$session"; then
+    pane="$(herdr_ensure_browse_pane "$session" "$ws" "$collection" || true)"
+    if [ -n "$pane" ]; then
+      fg="$(herdr_pane_fg_name "$session" "$pane")"
+      case "$fg" in
+        nvim)
+          echo "==> $name: nvim already in $pane"
+          ;;
+        ''|zsh|bash|fish|sh|nu)
+          echo "==> $name: nvim in $pane"
+          herdr --session "$session" pane run "$pane" \
+            "$script_dir/wtc-browse.sh --here $name" >/dev/null
+          ;;
+        *)
+          echo "==> $name: $pane is busy ($fg) — not replacing it" >&2
+          echo "    quit that TUI, or run: $script_dir/wtc-browse.sh --here" >&2
+          exit 1
+          ;;
+      esac
+      herdr_ensure_pr_tab "$session" "$ws" "$collection" || true
+      exit 0
+    fi
+    echo "warning: no browse/shell pane in workspace $ws — opening here would" >&2
+    echo "         take over the agent. pass --here if you really mean that." >&2
+    exit 1
+  fi
+fi
+
+run_nvim
