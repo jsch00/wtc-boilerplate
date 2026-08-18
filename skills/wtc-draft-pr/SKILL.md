@@ -32,7 +32,8 @@ Follow **`harness/skills/wtc-pr/SKILL.md` §1 through §5.1**, unchanged:
 Then create it as a draft:
 
 ```bash
-gh pr create --draft --base <working-branch> --title "<issue-id>: <what changed>"
+gh pr create --draft --base <working-branch> --title "<issue-id>: <what changed>" \
+  --label "wtc:$WTC_COLLECTION"
 ```
 
 Title carries the issue ID (and the tracker key if there is one), exactly as for a
