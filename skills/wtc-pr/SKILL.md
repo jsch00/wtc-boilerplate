@@ -1,6 +1,6 @@
 ---
 name: wtc-pr
-description: Open or advance a review-ready pull request for work in a worktree collection — catch up against the remote, branch correctly if needed, push, open or un-draft the PR, request review, then follow its checks and review comments and address them with fixes and replies. Use when the user asks to open a PR, mark one ready, ship or land a change, chase a red build, or answer review feedback. For work in progress that should not summon reviewers yet, use wtc-draft-pr instead.
+description: Open or advance a review-ready pull request for work in a worktree collection — catch up against the remote, branch correctly if needed, push, open or un-draft the PR, request review, then follow its checks, wait for the review bots to actually report, and address what they find with fixes, replies, and resolved threads. Use when the user asks to open a PR, mark one ready, ship or land a change, chase a red build, or answer review feedback. For work in progress that should not summon reviewers yet, use wtc-draft-pr instead.
 ---
 
 # Open or advance a review-ready PR
@@ -141,11 +141,67 @@ the change is genuinely reviewable — otherwise this is a `wtc-draft-pr` job.
 
 This is the part that makes the skill worth invoking twice.
 
+### 6.0 Never block the conversation on a build
+
+CI takes ten minutes and review bots take their own time. None of that is a
+reason for the user to sit and watch you sit and watch. **Nothing that waits may
+run in the foreground** — no `sleep`, no `gh pr checks --watch`, no polling loop
+in the turn you are answering from. Waiting in a *background* job is the point,
+and the loop below sleeps freely because nobody is blocked on it. Start the
+wait, say what you started, and carry on. Three mechanisms, three jobs:
+
+| You want | Use | Why |
+|---|---|---|
+| One "it finished" | `Bash(run_in_background)` with a loop that exits when the run completes | One notification, no extra context, and the harness re-invokes you when it exits |
+| To react to each check as it lands | `Monitor` | One event per check, so a red at minute two does not wait for the green at minute ten |
+| The whole follow-through done for you | a subagent | It reads failing logs, records flakes and answers threads without any of that landing in this context |
+
+The one-shot wait, which is the default:
+
+```bash
+until s=$(gh run view <run-id> --json status --jq .status); [ "$s" = completed ]; do sleep 45; done
+gh run view <run-id> --json conclusion --jq .conclusion
+```
+
+Started in the background, that costs one notification and nothing else.
+
+**Then keep going.** Starting a wait is not a reason to stop working: pick up
+the next repo, answer the question that was asked, or hand back. The user finds
+out when it lands, because the notification arrives whether or not you were
+watching for it. Reporting "waiting for CI" and stopping is the failure this
+section exists to prevent.
+
+If a wakeup is scheduled instead, make it a long fallback (20 minutes or more)
+for the case where the run hangs and no notification ever comes — not a
+short-interval poll for work the harness already tracks.
+
+### 6.0.1 When a subagent is the right answer
+
+Delegate when the work *after* the wait is substantial and its noise does not
+belong here — a red build whose diagnosis means reading a 3000-line job log, or
+a review round with several threads to answer. The agent keeps the log dumps in
+its own context and reports the conclusion.
+
+Scope it explicitly, because a subagent cannot ask the user anything:
+
+- **Give it the PR number, the repo, and the branch**, and tell it the branch is
+  its to push to — but that it is the *only* one pushing there. Two followers on
+  one branch is how you get a force-push over someone else's fix.
+- **Say what it may decide alone**: rerunning a job, recording a flake,
+  answering a review thread it can settle from the diff.
+- **Say what it must hand back**: anything needing a product or scope decision,
+  a fix that changes behaviour rather than tests, and merging — which is §6.5's
+  call and never a subagent's.
+- **Have it report back what §8 asks for**, so the answer arrives in the shape
+  you would have reported it yourself.
+
+One follower per PR. If one is already running, message it rather than starting
+a second.
+
 ### 6.1 Checks
 
 ```bash
-gh pr checks <n>            # snapshot
-gh pr checks <n> --watch    # only when the user is waiting on it
+gh pr checks <n>            # snapshot; see §6.0 for waiting
 ```
 
 Red check → read the failing job's log (`gh run view <id> --log-failed`),
@@ -153,11 +209,64 @@ fix on the branch, commit, push. A failure in code the branch didn't touch is
 worth saying out loud rather than silently retrying — flaky infrastructure and
 a real regression need different responses. Never merge on red.
 
-### 6.2 Review comments
+**Twice on the same commit is not a flake.** A flake moves: different test,
+different run. The same test failing the same way twice is a real failure, and
+the next step is to find the mechanism, not to rerun a third time. If the
+branch cannot plausibly have caused it, that narrows where to look — it does
+not make the failure someone else's problem.
+
+### 6.2 Have the reviewers actually reported yet?
+
+The bots review on their own schedule, and a PR that looks unreviewed five
+minutes after opening is usually a PR whose reviewers have not run yet. Check
+before concluding anything about review state:
+
+```bash
+gh pr view <n> --json reviews --jq '[.reviews[] | {who: .author.login, state, at: .submittedAt}]'
+gh pr view <n> --json statusCheckRollup \
+  --jq '[.statusCheckRollup[] | select(.name | test("[Bb]ugbot|[Cc]opilot")) | {name, status, conclusion}]'
+```
+
+Three states worth telling apart, because they need different responses:
+
+| What you see | What it means | Do |
+|---|---|---|
+| No review from a bot that reviews this repo | It has not run yet | Start a §6.0 wait and carry on — do not call the PR reviewed, and do not sit on it |
+| `Copilot encountered an error and was unable to review` | It failed, silently | `gh pr edit <n> --add-reviewer copilot-pull-request-reviewer` to retrigger |
+| A review exists | It reported | §6.3 |
+
+Which bots review a repo is a property of the repo, not something to assume.
+Look at what has reviewed recent merged PRs:
+
+```bash
+gh pr list --state merged --limit 5 --json number,reviews \
+  --jq '[.[].reviews[].author.login] | unique'
+```
+
+Bugbot posts as `cursor[bot]`, Copilot as `copilot-pull-request-reviewer`.
+Copilot also *suppresses* comments it is unsure about — they appear in the
+review body under "Suppressed comments" rather than as inline threads. Read
+them: they are real findings held back by a confidence threshold, not noise.
+Act on the ones that hold up, and say which you are leaving.
+
+### 6.3 Review comments
 
 ```bash
 gh pr view <n> --comments                          # conversation
 gh api repos/{owner}/{repo}/pulls/<n>/comments      # inline review comments
+```
+
+**Unresolved threads are the work list**, and they are a GraphQL concept — the
+REST endpoint above cannot tell you which are still open:
+
+```bash
+gh api graphql -F owner={owner} -F name={repo} -F num=<n> -f query='
+query($owner:String!,$name:String!,$num:Int!){
+ repository(owner:$owner,name:$name){pullRequest(number:$num){
+  reviewThreads(first:50){nodes{id isResolved isOutdated path line
+   comments(first:10){nodes{databaseId author{login} body}}}}}}}' \
+ --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+       | select(.isResolved | not) | "\(.path):\(.line) [\(.comments.nodes[0].author.login)]"'
 ```
 
 For each unresolved comment, do **both** halves — a change without an answer
@@ -171,9 +280,31 @@ leaves the reviewer re-reading the diff to guess whether you agreed:
   change) → surface it to the user rather than answering for them.
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/comments/<comment-id>/replies -f body='…'
+gh api repos/{owner}/{repo}/pulls/<n>/comments/<comment-id>/replies -f body='…'
 gh pr comment <n> --body '…'      # for top-level conversation
 ```
+
+Note the path: replies live under the **pull request**
+(`/pulls/<n>/comments/<id>/replies`). The bare `/pulls/comments/<id>/replies`
+form returns 404.
+
+### 6.4 Resolve what you answered
+
+A reply alone leaves the thread open, so the next person cannot tell answered
+from ignored, and the count of open threads stops meaning anything. Resolve
+each thread you have genuinely closed out:
+
+```bash
+gh api graphql -f query='
+mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread{ isResolved } } }' \
+  -F id='<thread-id-from-6.3>'
+```
+
+Resolve when **you** have answered it — a fix pushed, or reasoning given that
+you stand behind. Do not resolve a thread whose answer is "that is the user's
+call": leave it open and surface it, because resolving it hides a question
+nobody answered. A bot's thread is resolvable like anyone else's; bots do not
+come back to resolve their own.
 
 Push once the round is addressed, then re-request review:
 
@@ -181,7 +312,11 @@ Push once the round is addressed, then re-request review:
 gh pr edit <n> --add-reviewer <who>
 ```
 
-### 6.3 Merging is a separate decision
+A re-review is also how you retrigger a bot that errored — Copilot in
+particular reports failure as a review body rather than a failed check, so
+nothing else will tell you it needs asking again.
+
+### 6.5 Merging is a separate decision
 
 When checks are green and the PR is approved, **report that and stop.** Merge
 only when the user asks, and then:
@@ -212,6 +347,22 @@ GitHub's "Delete branch on merge" off. The **local** ref is disposable;
 Say what you did, the PR URL, check status, how many review comments were
 addressed vs. left open and why, and the one next thing that must happen —
 including who has to do it if it isn't you.
+
+Before calling a round finished, the three questions this skill exists to
+stop you answering by assumption:
+
+```bash
+gh pr view <n> --json reviews --jq '[.reviews[].author.login] | unique'   # who has reviewed
+gh pr checks <n> | awk -F'\t' '$2 != "pass"'                              # what is not green
+# and the unresolved-thread query from §6.3
+```
+
+- **Has every reviewer reported?** A bot that has not run yet is not an
+  approval, and "no comments" from a bot that errored is not a clean review.
+- **Is every thread you answered resolved?** An answered-but-open thread reads
+  as ignored by the next person to look.
+- **Is anything left open on purpose?** Say which, and why — an open thread you
+  chose to leave is a decision worth naming, not an oversight to hide.
 
 ---
 Canon: `harness/instructions/development-workflows.md`,
