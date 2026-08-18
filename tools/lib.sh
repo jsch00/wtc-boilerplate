@@ -521,6 +521,12 @@ write_collection_env() { # <collection-dir> <collection-name>
 EOF
     )
   fi
+  # Refuse to chmod through a symlink — that would change the mode of
+  # whatever it points at (possibly outside the collection).
+  if [ -L "$dir/.env.collection.local" ]; then
+    echo "error: $dir/.env.collection.local is a symlink; refuse to chmod through it" >&2
+    return 1
+  fi
   chmod 600 "$dir/.env.collection.local"
 
   cat > "$dir/mise.toml" <<'EOF'
