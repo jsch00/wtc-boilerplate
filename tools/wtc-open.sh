@@ -33,16 +33,19 @@ removes it along with the collection.
                     isolated worktree on its own branch, so the prompts buy
                     nothing that branch review doesn't already give)
   --no-remote-control
-                    start claude without Remote Control. On by default: the
-                    session then appears in the Claude mobile app and on
-                    claude.ai, named for the collection. Start-time only —
+                    start claude without Remote Control. On by default for
+                    claude started with the default args — passing
+                    --agent-args replaces those wholesale and leaves it off.
+                    With it, the session appears in the Claude mobile app and
+                    on claude.ai, named for the collection. Start-time only —
                     a session started without it cannot be attached later
   --no-agent        create the panes but start no agent
   --no-browse       leave the browse pane at a shell prompt. By default it
-                    opens LazyVim on the collection (tools/wtc-browse.sh),
-                    which is what that pane is for — a workspace whose
-                    human pane is an empty prompt asks you to type the one
-                    command it already knows
+                    opens LazyVim on the collection (tools/wtc-browse.sh)
+                    when nvim is on PATH, which is what that pane is for — a
+                    workspace whose human pane is an empty prompt asks you to
+                    type the one command it already knows. Without nvim the
+                    pane is left alone either way
   --focus           focus the last opened workspace (default: no focus)
 EOF
   exit 1
@@ -169,8 +172,12 @@ open_collection() { # <collection>
           : ;;   # already browsing this collection
         ''|zsh|bash|fish|sh|nu)
           sleep 2   # a fresh pane needs its prompt before it is typed at
+          # `pane run` takes a shell command string, so both halves are quoted:
+          # a collection directory may contain spaces, and anything unquoted
+          # here would be evaluated by that pane's shell.
+          printf -v browse_cmd '%q --here %q' "$script_dir/wtc-browse.sh" "$name"
           herdr --session "$session" pane run "$browse_id" \
-            "$script_dir/wtc-browse.sh --here $name" >/dev/null || true
+            "$browse_cmd" >/dev/null || true
           ;;
         *)
           : ;;   # someone's TUI is in there; leave it alone
@@ -193,8 +200,10 @@ open_collection() { # <collection>
         --direction "$split_dir" --cwd "$dir" --no-focus | herdr_first_pane_id)"
       herdr --session "$session" pane rename "$status_pane" status >/dev/null
       sleep 2   # let the shell reach its prompt before it is typed at
+      printf -v status_cmd '%q --repos --watch 120 %q' \
+        "$script_dir/wtc-status.sh" "$name"
       herdr --session "$session" pane run "$status_pane" \
-        "$script_dir/wtc-status.sh --repos --watch 120 $name" >/dev/null
+        "$status_cmd" >/dev/null
     fi
   fi
 
