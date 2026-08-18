@@ -11,8 +11,9 @@ Usage:
 
 Opens each collection as one workspace in the workspace root's herdr session:
 a single tab at the collection root, default panes agent / browse / shell /
-status, all carrying the collection env (.env.collection) — so no mise or
-shell activation is needed for ports to resolve.
+status, all carrying the collection env (.env.collection, then
+.env.collection.local) — so no mise or shell activation is needed for ports
+and collection-scoped secrets to resolve.
 
 With no <collection>, opens the collection containing this harness worktree.
 Re-running is safe: an existing workspace with that label is reused, never
@@ -124,14 +125,17 @@ open_collection() { # <collection>
     echo "==> $name: workspace $ws_id already open — reusing"
     agent_pane="$(herdr_pane_id_by_label "$session" "$ws_id" agent)"
   else
-    # Collection env into both panes, so ports resolve without mise.
+    # Collection env into both panes, so ports and collection-scoped secrets
+    # resolve without mise. Local last so it wins on a conflicting key, same
+    # order as mise.toml's _.file list.
     set -- create --cwd "$dir" --label "$name" --no-focus
-    if [ -f "$dir/.env.collection" ]; then
+    for envf in "$dir/.env.collection" "$dir/.env.collection.local"; do
+      [ -f "$envf" ] || continue
       while IFS= read -r kv; do
         case "$kv" in ''|\#*) continue ;; esac
         set -- "$@" --env "$kv"
-      done < "$dir/.env.collection"
-    fi
+      done < "$envf"
+    done
 
     ws_out="$(herdr --session "$session" workspace "$@")"
     ws_id="$(printf '%s' "$ws_out" | tr '{}' '\n\n' | sed -n 's/.*"workspace_id":"\([^"]*\)".*/\1/p' | head -n1)"

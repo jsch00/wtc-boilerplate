@@ -61,14 +61,16 @@ secret that shows up as untracked means the ignore rule is missing.
 ## Collection-scoped secrets
 
 ```text
-<collection>/.env.collection.local     # 600, hand-authored, never generated
+<collection>/.env.collection.local     # 600, seeded empty once, then hand-authored
 ```
 
 Created empty by `write_collection_env` and **never rewritten**, unlike its
 neighbour `.env.collection`, which is regenerated wholesale on every
-`branch-off` — anything hand-added *there* is lost, and it is mode 644. The
-collection root is not a git repo, so this file cannot be committed by
-accident.
+`branch-off` — anything hand-added *there* is lost (and that file is not
+chmod'd; its mode follows the caller's umask). The collection root is not a
+git repo, so `.env.collection.local` cannot be committed by accident.
+`retire.sh` deletes it with the collection — secrets scoped to this wtc die
+with it.
 
 `mise.toml` lists it second, so it composes with (and wins over) the generated
 env:
@@ -78,7 +80,8 @@ env:
 _.file = [".env.collection", ".env.collection.local"]
 ```
 
-Without mise: `set -a; . ./.env.collection; . ./.env.collection.local; set +a`.
+Without mise (including `tools/wtc-open.sh`, which injects both into herdr):
+`set -a; . ./.env.collection; . ./.env.collection.local; set +a`.
 
 Two limits worth knowing before reaching for it:
 
