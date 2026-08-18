@@ -28,9 +28,13 @@ harness/tools/wtc-status.sh --repos --watch 120 # for a human to leave open
 `--watch` is for a pane a human is looking at. **Don't run a watch loop to
 answer a question** — take the snapshot, answer, stop.
 
-The collection table is clickable where both ends have a terminal: the `PR`
-cell opens the pull request in a browser, the `TREE` cell opens a diff view.
-That's for the human reading the pane, not for you.
+The collection table is clickable where both ends have a terminal — that's for
+the human reading the pane, not for you. Each target does one thing: `REPO`
+focuses that sibling in the browse nvim, `TREE` opens its diff view, the PR
+**number** opens the pull request on github.com, and `❯` opens it in Octo in
+the browse pane. `s` hands the mouse back so text can be selected (which also
+freezes the table, since a redraw mid-drag would clear the selection), and `?`
+shows the key and icon reference.
 
 ## Reading it
 
@@ -44,22 +48,50 @@ the numbers are current without you doing anything. `--no-fetch` when offline.
 - **a branch name** — work in flight, or a branch whose PR has landed and
   hasn't been caught up yet.
 
-**TREE column**
+**↑ and ↓ columns**
 
-- **`clean`** — nothing to say.
-- **`±N`** — N changed files.
+Commits ahead of and behind the remote, blank when zero.
+
 - **`↑N`** — N commits not pushed.
 - **`↓N`** — **N commits behind the development tip.** This is the catch-up
   signal, and it means the same thing for a detached worktree and for a
   branch: work started here would be built on stale ground. The footer counts
   them.
 
+**TREE column**
+
+- **`clean`** — nothing to say.
+- **`±N`** — N changed files.
+
 **PR column**
 
-- **`✗`** — a check is failing. Fixing it is the `wtc-pr` skill's §6.1.
-- **`●`** — checks still running; nothing to conclude yet.
-- **`—`** — a PR exists but has no checks, or none have reported.
-- **blank** — no PR. Expected for `⌂` rows: nothing is in flight to have one.
+`#N` followed by up to three status slots, each silent unless it has something
+to say — so a healthy PR is just `#225 ✓`.
+
+- **checks** — `✓` passing · `✗` failing (that's `wtc-pr` §6.1) · `●` running,
+  nothing to conclude yet · `◌` draft · `·` no checks reported
+- **merge** — `↓` behind its base · `⚠` conflicts · `⊘` blocked · blank clean
+- **review** — `N` unresolved review threads · `✓` approved · `!` changes
+  requested · blank nothing outstanding
+
+Blank overall means no open PR. Expected for `⌂` rows: nothing is in flight to
+have one.
+
+**PRS section** (scoped to one collection)
+
+Lists the open PRs *this collection* opened, found by the `wtc:<collection>`
+label the PR skills apply — so they are still listed after the worktree has
+gone back to the tip, and a collection carrying several PRs shows all of them
+rather than one per worktree. The numbers match the inline `PR` column, so the
+two views correlate by eye.
+
+It also calls out a worktree still sitting on a branch whose PR has already
+merged or closed — the one thing an open-PRs-only view would otherwise hide,
+and exactly what a catch-up clears.
+
+Unscoped runs skip the section: it is one API call per repo per collection, and
+a `--watch` pane doing that across every collection is a rate limit waiting to
+happen.
 
 A dirty tree in a collection nobody is working in is usually an interrupted
 session. Worth surfacing; not yours to clean up.

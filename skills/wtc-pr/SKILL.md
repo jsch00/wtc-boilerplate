@@ -106,6 +106,27 @@ gh pr create --base <working-branch> --fill --title "<issue-id>: <what changed>"
   reviewer should look at hardest. Link the issue and the tracker ticket. If this
   is one of several PRs for one wtc, link the siblings.
 
+### 5.1 Label it with the collection
+
+```bash
+gh pr create ... --label "wtc:$WTC_COLLECTION"
+```
+
+The label is how `wtc-status` finds this PR later — it is what lets a
+collection list the work it has in flight after the worktree has already gone
+back to the tip, and it needs no local file to go stale. Create it first if the
+repo does not have it yet:
+
+```bash
+gh label create "wtc:$WTC_COLLECTION" --color ededed \
+  --description "Opened from the $WTC_COLLECTION worktree collection" 2>/dev/null || true
+```
+
+`$WTC_COLLECTION` comes from `.env.collection`. If labelling fails — no
+permission, a repo that refuses new labels — **open the PR anyway** and say so.
+A PR that is missing from one status table is a smaller problem than a PR that
+was never opened.
+
 ### 5.2 Ready for review
 
 ```bash

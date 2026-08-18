@@ -24,13 +24,29 @@ be left running in a pane — wtc-open.sh puts one in every wtc:
                 (default 300)
 
 BRANCH shows `⌂ <branch>` for a worktree detached at the development tip —
-the resting state, and up to date unless TREE says otherwise. TREE carries
-±changed files, ↑commits ahead, ↓commits behind; any ↓ means a catch-up will
-bring in remote changes.
+the resting state, and up to date unless a column says otherwise. ↑ and ↓ are
+commits ahead of and behind the remote, blank when zero; any ↓ means a
+catch-up will bring in remote changes. TREE carries ±changed files.
+
+Scoped to one collection, a PRS section lists the open pull requests that
+collection opened — found by the `wtc:<collection>` label its PR skills apply,
+so they are still listed after the worktree has gone back to the tip. A
+worktree still sitting on a branch whose PR has already merged or closed is
+called out there too, since an open-PRs view would otherwise hide it.
 
 On a terminal the collection table is clickable: REPO focuses that sibling
-in the browse nvim, TREE opens its git status there (lazygit if nvim is
-not up), PR opens the pull request in Octo or the browser. r redraws, q quits.
+in the browse nvim, TREE opens its git status there (lazygit if nvim is not
+up), the PR number opens the pull request on github.com, and ▣ opens it in
+Octo in the browse pane. Each target does one thing and reports when it
+cannot, rather than quietly doing the other. r redraws, q quits.
+
+`?` toggles a key and icon reference; the footer otherwise stays one line.
+
+Clicking means the terminal never sees a drag, so its own text selection stops
+working. `s` hands the mouse back and freezes the table until you press a key,
+which is what lets you select and copy out of it. (Most terminals also have a
+modifier that bypasses mouse reporting for one drag — Option in iTerm2, Shift
+in many others — if you would rather not leave the table live.)
 EOF
   exit 1
 }
@@ -75,11 +91,12 @@ esac
 # One source of truth for the columns: the widths and the click map must not
 # drift apart — and no row may wrap, or a click lands on the wrong worktree.
 # BRANCH absorbs the terminal width; the status pane is a narrow one.
-c_coll=22 c_repo=16 c_pr=10 c_tree=10 c_branch=34
-col_repo=0 col_pr=0 col_tree=0
+c_coll=22 c_repo=16 c_pr=12 c_ahead=4 c_behind=4 c_tree=8 c_branch=34
+col_repo=0 col_pr=0 col_ahead=0 col_behind=0 col_tree=0
 # Scoped to one collection, the COLLECTION column is a constant — spend those
 # columns on branch names instead and name the collection above the table.
 show_coll=yes; [ -n "$only" ] && show_coll=no
+show_help=no   # ? toggles the key/icon reference; the footer stays one line
 
 layout() { # recompute the columns for the terminal as it is now
   # stty asks the terminal itself; tput would believe an inherited $COLUMNS.
@@ -88,9 +105,10 @@ layout() { # recompute the columns for the terminal as it is now
   case "$cols" in ''|*[!0-9]*) cols=100 ;; esac
   [ "$cols" -ge 46 ] || cols=46
   c_repo=16
-  # seps = the gaps left of PR; one more sits between PR and TREE.
-  if [ "$show_coll" = yes ]; then c_coll=22; seps=3; else c_coll=0; seps=2; fi
-  c_branch=$((cols - c_coll - c_repo - c_pr - c_tree - seps - 2))   # 1 spare, so no wrap
+  # One gap between every pair of columns, plus 1 spare so nothing wraps.
+  if [ "$show_coll" = yes ]; then c_coll=22; gaps=6; else c_coll=0; gaps=5; fi
+  fixed=$((c_coll + c_repo + c_pr + c_ahead + c_behind + c_tree))
+  c_branch=$((cols - fixed - gaps - 1))
   while [ "$c_branch" -lt 14 ] && [ "$c_coll" -gt 8 ]; do
     c_coll=$((c_coll - 1)); c_branch=$((c_branch + 1))
   done
@@ -99,29 +117,125 @@ layout() { # recompute the columns for the terminal as it is now
   done
   [ "$c_branch" -ge 6 ] || c_branch=6
   [ "$c_branch" -le 40 ] || c_branch=40   # a wide terminal is not a reason for a wide gap
-  # 1-based screen columns of the clickable cells.
+  # 1-based screen columns, each one gap past the end of the previous cell.
+  # Derived in a chain rather than summed per column: the click map and the
+  # printed row then cannot drift apart.
   if [ "$show_coll" = yes ]; then col_repo=$((c_coll + 2)); else col_repo=1; fi
-  col_pr=$((c_coll + c_repo + c_branch + seps + 1))
-  col_tree=$((col_pr + c_pr + 1))
+  col_branch=$((col_repo + c_repo + 1))
+  col_pr=$((col_branch + c_branch + 1))
+  col_ahead=$((col_pr + c_pr + 1))
+  col_behind=$((col_ahead + c_ahead + 1))
+  col_tree=$((col_behind + c_behind + 1))
 }
 
 ROWS=("")   # ROWS[<screen line>] = "<worktree>|<slug>|<branch>|<pr number>"
+TERMX=("")  # TERMX[<screen line>] = screen column of that row's ▣ (terminal PR)
+PROWS=("")  # PROWS[<screen line>] = "<slug>|<pr number>" for the PRS section
 line=0      # lines printed so far, i.e. the screen line of the last one
+# The PRS section is a fixed layout, so its two click zones are constants.
+prs_x_num=3 prs_w_num=6 prs_x_term=0
+TERM_GLYPH="❯"   # a prompt chevron: opens the PR in the browse pane,
+                 # where ▣ read as a fourth status icon rather than an action
 
 out() { printf '%s\n' "$1"; line=$((line + 1)); }
 
-pr_for() { # <repo> <branch> -> "<number>\t<#n + rollup glyph>", or empty
-  command -v gh >/dev/null 2>&1 || return 0
-  slug="$(repo_slug_for "$1")"
-  [ -n "$slug" ] || return 0
-  gh pr view "$2" --repo "$slug" --json number,isDraft,statusCheckRollup --jq '
-    (.number|tostring) + "\t#" + (.number|tostring)
-    + (if .isDraft then "d" else "" end) + " "
-    + ([.statusCheckRollup[]? | (.conclusion // .state // "")] | map(select(. != "")) |
-       if length == 0 then "—"
-       elif any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED") then "✗"
-       elif any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED") then "●"
-       else "✓" end)' 2>/dev/null || true
+# --- PR facts: one round trip each, run in parallel, cached -----------------
+# Every fact a row shows about a PR comes from one GraphQL query, so a row
+# costs one round trip rather than one per column. They are then fired off
+# together and waited on once: the table was spending ~4s of a 4.5s render
+# sitting in sequential HTTP, which is a shape no language fixes for you.
+PR_CACHE="${TMPDIR:-/tmp}/wtc-status-$(id -u)"
+pr_cache_age="${WTC_PR_CACHE_AGE:-90}"
+
+PR_QUERY='
+query($owner:String!,$name:String!,$branch:String!){
+  repository(owner:$owner,name:$name){
+    pullRequests(headRefName:$branch,first:1,
+                 orderBy:{field:CREATED_AT,direction:DESC}){
+      nodes{
+        number state isDraft mergeStateStatus reviewDecision
+        reviewThreads(first:100){nodes{isResolved isOutdated}}
+        commits(last:1){nodes{commit{statusCheckRollup{state}}}}
+      }}}}'
+
+# number, state, checks, merge, review, title — the shape every renderer reads.
+# State is carried so one query answers both "what is in flight" and "is this
+# worktree still sitting on a branch whose PR is already gone".
+PR_SHAPE='.data.repository.pullRequests.nodes[0] // empty | [
+    (.number|tostring),
+    .state,
+    (if .isDraft then "draft" else (.commits.nodes[0].commit.statusCheckRollup.state // "NONE") end),
+    (.mergeStateStatus // "UNKNOWN"),
+    (([.reviewThreads.nodes[] | select((.isResolved|not) and (.isOutdated|not))] | length) as $open
+      | if $open > 0 then ($open|tostring)
+        elif .reviewDecision == "APPROVED" then "approved"
+        elif .reviewDecision == "CHANGES_REQUESTED" then "changes"
+        else "none" end),
+    (.title // "")
+  ] | @tsv'
+
+pr_cache_file() { # <slug> <branch>
+  printf '%s/%s\n' "$PR_CACHE" "$(printf '%s@%s' "$1" "$2" | tr -c 'A-Za-z0-9._@-' '_')"
+}
+
+pr_cache_fresh() { # <file> — 0 while it may still be believed
+  [ -f "$1" ] || return 1
+  now="$(date +%s)"
+  mt="$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0)"
+  [ $((now - mt)) -lt "$pr_cache_age" ]
+}
+
+pr_fetch_bg() { # <slug> <branch> — refresh one cache entry, in the background
+  f="$(pr_cache_file "$1" "$2")"
+  pr_cache_fresh "$f" && return 0
+  (
+    owner="${1%%/*}"; nm="${1#*/}"
+    gh api graphql -F owner="$owner" -F name="$nm" -F branch="$2" \
+      -f query="$PR_QUERY" --jq "$PR_SHAPE" > "$f.$$" 2>/dev/null || : > "$f.$$"
+    mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$"
+  ) &
+}
+
+pr_facts() { # <slug> <branch> -> the cached TSV line, or empty
+  f="$(pr_cache_file "$1" "$2")"
+  [ -f "$f" ] && cat "$f" || true
+}
+
+# --- glyphs -----------------------------------------------------------------
+# Each slot only speaks when it has something to say: a PR with green checks,
+# no conflict and no comments is just "#225 ✓". Silence is the common case,
+# and a row of icons that are always present is a row you stop reading.
+G_OK=$'\033[32m✓\033[0m'
+G_BAD=$'\033[31m✗\033[0m'
+G_RUN=$'\033[33m●\033[0m'
+G_NONE=$'\033[2m·\033[0m'
+
+glyph_checks() { # <state> -> one column
+  case "$1" in
+    SUCCESS)                      printf '%s' "$G_OK" ;;
+    FAILURE|ERROR)                printf '%s' "$G_BAD" ;;
+    PENDING|EXPECTED)             printf '%s' "$G_RUN" ;;
+    draft)                        printf '\033[2m◌\033[0m' ;;
+    *)                            printf '%s' "$G_NONE" ;;
+  esac
+}
+
+glyph_merge() { # <mergeStateStatus> -> one column, blank when there is nothing to flag
+  case "$1" in
+    BEHIND)          printf '\033[33m↓\033[0m' ;;
+    DIRTY)           printf '\033[31m⚠\033[0m' ;;
+    BLOCKED)         printf '\033[33m⊘\033[0m' ;;
+    *)               printf ' ' ;;
+  esac
+}
+
+glyph_review() { # <approved|changes|none|N> -> one column
+  case "$1" in
+    approved) printf '\033[32m✓\033[0m' ;;
+    changes)  printf '\033[31m!\033[0m' ;;
+    none|'')  printf ' ' ;;
+    *)        printf '\033[33m%s\033[0m' "$1" ;;   # unresolved comment count
+  esac
 }
 
 # Both write to a variable rather than stdout: cells end in padding, and
@@ -165,6 +279,30 @@ repos_table() {
     done
   fi
 
+  # Pass one: walk the worktrees, fire off every PR query at once, wait once.
+  # Sequential lookups were the whole of the render time; the walk itself is
+  # local git and costs nothing.
+  mkdir -p "$PR_CACHE" 2>/dev/null || true
+  WTS=(); WT_REPO=(); WT_SLUG=(); WT_BRANCH=()
+  for c in "$ROOT"/*/; do
+    c="${c%/}"
+    [ -d "$c/harness" ] || continue
+    cname="$(basename "$c")"
+    if [ -n "$only" ] && [ "$cname" != "$only" ]; then continue; fi
+    for wt in "$c"/*/; do
+      wt="${wt%/}"
+      [ -e "$wt/.git" ] || continue
+      wrepo="$(basename "$wt")"; [ "$wrepo" = harness ] && wrepo="$(harness_repo)"
+      wbranch="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+      wslug="$(slug_for_worktree "$wt" "$wrepo")"
+      WTS+=("$wt"); WT_REPO+=("$wrepo"); WT_SLUG+=("$wslug"); WT_BRANCH+=("$wbranch")
+      if [ -n "$wbranch" ] && [ -n "$wslug" ] && command -v gh >/dev/null 2>&1; then
+        pr_fetch_bg "$wslug" "$wbranch"
+      fi
+    done
+  done
+  wait 2>/dev/null || true
+
   stale=0
   hdr=""
   if [ "$show_coll" = yes ]; then
@@ -174,7 +312,9 @@ repos_table() {
   fi
   fit REPO $c_repo;       hdr="$hdr$_fit "
   fit BRANCH $c_branch;   hdr="$hdr$_fit "
-  fit PR $c_pr;           hdr="$hdr$_fit TREE"
+  fit PR $c_pr;           hdr="$hdr$_fit "
+  fit "↑" $c_ahead;       hdr="$hdr$_fit "
+  fit "↓" $c_behind;      hdr="$hdr$_fit TREE"
   out $'\033[1m'"$hdr"$'\033[0m'
   for c in "$ROOT"/*/; do
     c="${c%/}"
@@ -199,20 +339,34 @@ repos_table() {
       branch="$label"
       [ "$kind" = detached ] && branch="⌂ $label"
 
+      # ↑ and ↓ are their own columns now: two numbers you can scan down,
+      # rather than three facts crammed into one cell. TREE keeps the one
+      # thing that is about the working tree rather than the remote.
       tree=""
       [ "$changed" != 0 ] && tree="±$changed"
-      [ "$ahead" != 0 ] && tree="$tree${tree:+ }↑$ahead"
+      a_disp=""; [ "$ahead" != 0 ] && a_disp="$ahead"
+      b_disp=""
       if [ "$behind" != 0 ]; then
-        tree="$tree${tree:+ }↓$behind"
+        b_disp="$behind"
         stale=$((stale + 1))
       fi
       [ -n "$tree" ] || tree=clean
       # A detached HEAD has no branch to look a PR up by; ⌂ rows show no PR
       # because there is no work in flight to have one.
-      pr=""
-      [ "$kind" = branch ] && pr="$(pr_for "$repo" "$branch")"
-      pr_num="${pr%%$'\t'*}"; pr_disp="${pr#*$'\t'}"
-      [ -n "$pr" ] || { pr_num=""; pr_disp=""; }
+      pr_num=""; pr_disp=""
+      if [ "$kind" = branch ]; then
+        IFS=$'\t' read -r pr_num pr_state pr_checks pr_merge pr_review _ <<EOF
+$(pr_facts "$(slug_for_worktree "$wt" "$repo")" "$label")
+EOF
+        # A merged or closed PR is not in flight; the row for it is the orphan
+        # warning under PRS, not a PR cell that looks live.
+        [ "$pr_state" = OPEN ] || pr_num=""
+        if [ -n "$pr_num" ]; then
+          # Underline only the number: it is the click target, and underlining
+          # the icons beside it made the whole cell look like one button.
+          pr_disp="#$pr_num $(glyph_checks "$pr_checks")$(glyph_merge "$pr_merge")$(glyph_review "$pr_review")"
+        fi
+      fi
 
       row=""
       if [ "$show_coll" = yes ]; then fit "$name" $c_coll; row="$_fit "; fi
@@ -221,12 +375,31 @@ repos_table() {
       # it from the display only; unset, nothing is stripped.
       cell "${dir#${WTC_REPO_PREFIX:-}}" $c_repo; row="$row$_cell "
       fit "$branch" $c_branch;     row="$row$_fit "
-      cell "$pr_disp" $c_pr;       row="$row$_cell "
+      # The number and the ▣ are two targets, not one cell with a fallback:
+      # each does exactly one thing, so a click can no longer set off both.
+      # Built by hand rather than through cell(): the underline belongs on
+      # "#225" alone, and the escape codes in the glyphs would break its
+      # width arithmetic anyway.
+      if [ -n "$pr_num" ]; then
+        term_x=$((col_pr + 4 + ${#pr_num} + 1))
+        printf -v _cell '\033[4m#%s\033[24m %s%s%s %s' "$pr_num" \
+          "$(glyph_checks "$pr_checks")" "$(glyph_merge "$pr_merge")" \
+          "$(glyph_review "$pr_review")" "$TERM_GLYPH"
+        pad=$((c_pr - (1 + ${#pr_num} + 1 + 3 + 1 + 1)))
+        [ "$pad" -gt 0 ] && printf -v _cell '%s%*s' "$_cell" "$pad" ''
+      else
+        term_x=0
+        fit "" $c_pr; _cell="$_fit"
+      fi
+      row="$row$_cell "
+      fit "$a_disp" $c_ahead;      row="$row$_fit "
+      fit "$b_disp" $c_behind;     row="$row$_fit "
       cell "$tree" $c_tree;        row="$row$_cell"
       out "$row"
       # $label, not $branch: the click map wants a real ref for `gh browse`,
       # not the ⌂-prefixed display string.
-      ROWS[$line]="$wt|$(repo_slug_for "$repo")|$label|$pr_num"
+      ROWS[$line]="$wt|$(slug_for_worktree "$wt" "$repo")|$label|$pr_num"
+      TERMX[$line]=$term_x
       name=""
     done
   done
@@ -236,8 +409,91 @@ repos_table() {
   return 0
 }
 
+prs_table() { # the collection's open PRs, in detail, keyed by the same numbers
+  # Scoped runs only. Unscoped, this would be one gh call per repo per
+  # collection on every redraw, which is a rate limit waiting to happen — so
+  # the all-collections view keeps the inline PR column and nothing more.
+  [ -n "$only" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+
+  rows="$(wtc_pr_list "$only" 2>/dev/null || true)"
+  # Read off the cache pass one already filled — no extra round trips.
+  orphans=""
+  i=0
+  while [ "$i" -lt "${#WTS[@]}" ]; do
+    ob="${WT_BRANCH[$i]}"; os="${WT_SLUG[$i]}"
+    if [ -n "$ob" ] && [ -n "$os" ]; then
+      IFS=$'\t' read -r _ ostate _ <<EOF
+$(pr_facts "$os" "$ob")
+EOF
+      case "$ostate" in
+        MERGED|CLOSED)
+          orphans="$orphans$(basename "${WTS[$i]}")	$ob	$ostate
+" ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  [ -n "$rows$orphans" ] || return 0
+
+  out ""
+  out $'\033[1m'"PRS  $(wtc_pr_label "$only")"$'\033[0m'
+
+  if [ -n "$rows" ]; then
+    while IFS=$'\t' read -r repo num checks merge review title; do
+      [ -n "$num" ] || continue
+      slug="$(repo_slug_for "$repo")"
+      fit "$repo" $c_repo
+      # Width is whatever is left; the title is the one thing safe to cut.
+      room=$((cols - prs_x_num - prs_w_num - c_repo - 10))
+      [ "$room" -ge 10 ] || room=10
+      # Underline on the number only — it is the click target. The chevron is
+      # underlined too because it is the other one; nothing else is.
+      printf -v num_f '%-6s' "#$num"
+      printf -v prow '  \033[4m#%s\033[24m%*s%s %s%s%s \033[4m%s\033[24m  %s' \
+        "$num" $((prs_w_num - 1 - ${#num})) '' "$_fit" \
+        "$(glyph_checks "$checks")" "$(glyph_merge "$merge")" "$(glyph_review "$review")" \
+        "$TERM_GLYPH" "${title:0:$room}"
+      prs_x_term=$((prs_x_num + prs_w_num + c_repo + 5))
+      out "$prow"
+      PROWS[$line]="$slug|$num"
+    done <<EOF
+$rows
+EOF
+
+  fi
+
+  # A worktree still sitting on a branch whose PR has already gone is exactly
+  # what an open-PRs-only view hides. Say it, and say what fixes it.
+  if [ -n "$orphans" ]; then
+    while IFS=$'\t' read -r repo branch state; do
+      [ -n "$repo" ] || continue
+      out $'\033[33m'"  ⚠ $repo on $branch — PR $state; catch-up returns it to the tip"$'\033[0m'
+    done <<EOF
+$orphans
+EOF
+  fi
+  return 0
+}
+
+# A legend you have read is clutter, so the permanent footer is one short
+# line and the reference is a keypress away. Cramming both a click map and
+# three icon scales into two dim lines made the table end in a wall of text
+# nobody reads twice.
 legend() {
-  out $'\033[2m'"click: REPO → nvim · TREE → git · PR → octo/github   r redraw · q quit"$'\033[0m'
+  out ""
+  out $'\033[2m'"? keys · s select · r redraw · q quit"$'\033[0m'
+}
+
+help_block() {
+  d=$'\033[2m'; z=$'\033[0m'; k=$'\033[1m'
+  out ""
+  out "${k}KEYS${z}    ${d}?${z} this list   ${d}s${z} select text   ${d}r${z} redraw   ${d}q${z} quit"
+  out "${k}CLICK${z}   ${d}REPO${z} open in nvim   ${d}TREE${z} git status   ${d}#n${z} github.com   ${d}$TERM_GLYPH${z} octo in browse"
+  out ""
+  out "${k}CHECKS${z}  $(glyph_checks SUCCESS) passing   $(glyph_checks FAILURE) failing   $(glyph_checks PENDING) running   $(glyph_checks draft) draft   $(glyph_checks NONE) none"
+  out "${k}MERGE${z}   $(glyph_merge BEHIND) behind base   $(glyph_merge DIRTY) conflict   $(glyph_merge BLOCKED) blocked   ${d}blank${z} clean"
+  out "${k}REVIEW${z}  $(glyph_review approved) approved   $(glyph_review changes) changes requested   $(glyph_review 3) unresolved threads   ${d}blank${z} none"
 }
 
 procs_table() {
@@ -266,11 +522,13 @@ render() {
   line=0
   [ "$watch" = yes ] && printf '\033[H\033[2J'
   case "$want" in
-    repos) repos_table ;;
+    repos) repos_table; prs_table ;;
     procs) procs_table ;;
-    both)  repos_table; out ""; procs_table ;;
+    both)  repos_table; prs_table; out ""; procs_table ;;
   esac
-  [ "$click" = yes ] && legend
+  if [ "$click" = yes ]; then
+    if [ "$show_help" = yes ]; then help_block; else legend; fi
+  fi
   return 0
 }
 
@@ -278,17 +536,37 @@ render() {
 # Mouse reports only; output processing stays on (-icanon, not raw) so the
 # table still prints with normal line endings.
 
+mouse_on()  { printf '\033[?1000h\033[?1006h\033[?25l'; }  # button events, SGR, no cursor
+mouse_off() { printf '\033[?1006l\033[?1000l\033[?25h'; }
+
 tty_setup() {
   tty_saved="$(stty -g)"
   trap tty_restore EXIT
   trap 'exit 0' INT TERM
   stty -icanon -echo min 1 time 0
-  printf '\033[?1000h\033[?1006h\033[?25l'   # button events, SGR encoding, no cursor
+  mouse_on
 }
 
 tty_restore() {
-  printf '\033[?1006l\033[?1000l\033[?25h'
+  mouse_off
   [ -n "${tty_saved:-}" ] && stty "$tty_saved" 2>/dev/null || true
+}
+
+# While the table reports mouse events the terminal never sees the drag, so
+# its own text selection cannot work — copying a branch name out of the table
+# is impossible while clicking is on. Select mode hands the mouse back.
+#
+# It also stops the clock: a --watch redraw mid-drag would clear the screen
+# under the selection, so the table freezes until you come back. That is the
+# whole point of a mode rather than a modifier — the freeze is half the fix.
+select_mode() {
+  mouse_off
+  printf '\033[%d;1H\033[2K\033[7m SELECT \033[0m select and copy as usual — any key resumes' \
+    $((line + 2))
+  # No -t: this blocks, which is what freezes the redraw.
+  IFS= read -r -s -n1 ch || true
+  case "$ch" in q|Q) exit 0 ;; esac
+  mouse_on
 }
 
 differ_cmd() { # <worktree> -> the diff view to run there
@@ -319,20 +597,30 @@ open_nvim() { # <worktree> <want: files|git> [pr-number]
   [ "$got" = ok ]
 }
 
-open_pr() { # <worktree> <slug> <branch> <pr number>
-  # Only hand off to nvim when there is a PR to open. An empty $4 would
-  # still return success if browse is up (WtcBrowseFocus), skipping the
-  # gh browse --branch fallback.
-  if [ -n "$4" ] && open_nvim "$1" files "$4"; then
-    return 0
-  fi
+# Two targets, one action each. The old single target tried nvim and fell
+# through to the browser when Octo did not confirm — so a half-working browse
+# pane jumped tabs *and* opened a tab in your browser off one click. A target
+# that cannot do its one thing now says so instead of doing the other one.
+
+open_pr_web() { # <slug> <branch> <pr number>
   command -v gh >/dev/null 2>&1 || return 0
-  [ -n "$2" ] || return 0
-  if [ -n "$4" ]; then
-    (gh pr view "$4" --repo "$2" --web >/dev/null 2>&1 &)
+  [ -n "$1" ] || return 0
+  if [ -n "$3" ]; then
+    (gh pr view "$3" --repo "$1" --web >/dev/null 2>&1 &)
   else
-    (gh browse --repo "$2" --branch "$3" >/dev/null 2>&1 &)
+    (gh browse --repo "$1" --branch "$2" >/dev/null 2>&1 &)
   fi
+}
+
+open_pr_term() { # <worktree> <pr number> — Octo in the collection's browse nvim
+  [ -n "$2" ] || return 0
+  open_nvim "$1" files "$2" && return 0
+  flash "no browse pane for $(collection_of "$1") — run wtc-browse, or click the number for the web"
+}
+
+# A one-line message under the table that survives until the next redraw.
+flash() {
+  printf '\033[s\033[%d;1H\033[2K\033[33m%s\033[0m\033[u' $((line + 2)) "$1"
 }
 
 open_diff() { # <worktree> — nvim git-status tab, else lazygit in a herdr tab
@@ -367,16 +655,37 @@ on_click() { # <button>;<column>;<line> from an SGR mouse report
   btn="${1%%;*}"; rest="${1#*;}"; x="${rest%%;*}"; y="${rest##*;}"
   [ "$btn" = 0 ] || return 0                       # left button only, no wheel/drag
   case "$x$y" in *[!0-9]*) return 0 ;; esac
+  # The PRS section first: its rows are laid out differently and carry only
+  # a slug and a number, no worktree.
+  pentry="${PROWS[$y]:-}"
+  if [ -n "$pentry" ]; then
+    pslug="${pentry%%|*}"; pnum="${pentry##*|}"
+    if [ "$x" -ge "$prs_x_num" ] && [ "$x" -lt $((prs_x_num + prs_w_num)) ]; then
+      open_pr_web "$pslug" "" "$pnum"
+    elif [ "$prs_x_term" -gt 0 ] && [ "$x" -ge "$prs_x_term" ] \
+         && [ "$x" -lt $((prs_x_term + 2)) ]; then
+      # slug -> worktree dir. The harness sibling is always `harness/`,
+      # never its repo name, so map that one back before building the path.
+      pdir="${pslug#*/}"
+      [ "$pdir" = "$(harness_repo)" ] && pdir=harness
+      open_pr_term "$ROOT/$only/$pdir" "$pnum"
+    fi
+    return 0
+  fi
+
   entry="${ROWS[$y]:-}"
   [ -n "$entry" ] || return 0
   wt="${entry%%|*}"; rest="${entry#*|}"
   slug="${rest%%|*}"; rest="${rest#*|}"
   branch="${rest%%|*}"; pr_num="${rest##*|}"
+  term_x="${TERMX[$y]:-0}"
   # Only the cells themselves act — empty space right of the table does not.
   if [ "$x" -ge "$col_tree" ] && [ "$x" -lt $((col_tree + c_tree)) ]; then
     open_diff "$wt"
+  elif [ "$term_x" -gt 0 ] && [ "$x" -ge "$term_x" ] && [ "$x" -lt $((term_x + 2)) ]; then
+    open_pr_term "$wt" "$pr_num"
   elif [ "$x" -ge "$col_pr" ] && [ "$x" -lt $((col_pr + c_pr)) ]; then
-    open_pr "$wt" "$slug" "$branch" "$pr_num"
+    open_pr_web "$slug" "$branch" "$pr_num"
   elif [ "$x" -ge "$col_repo" ] && [ "$x" -lt $((col_repo + c_repo)) ]; then
     open_nvim "$wt" files || open_diff "$wt"
   fi
@@ -404,6 +713,9 @@ wait_events() { # until the next redraw is due, or a key asks for one
       case "$ch" in
         q|Q) exit 0 ;;
         r|R|' ') return 0 ;;
+        s|S) select_mode; return 0 ;;
+        '?'|h|H) if [ "$show_help" = yes ]; then show_help=no; else show_help=yes; fi
+                 return 0 ;;
         $'\033') read_mouse ;;
       esac
     else
