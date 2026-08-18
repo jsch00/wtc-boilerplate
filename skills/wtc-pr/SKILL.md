@@ -123,9 +123,11 @@ This is the part that makes the skill worth invoking twice.
 ### 6.0 Never block the conversation on a build
 
 CI takes ten minutes and review bots take their own time. None of that is a
-reason for the user to sit and watch you sit and watch. **Never `sleep`, never
-`gh pr checks --watch`, and never poll in the foreground** — start the wait,
-say what you started, and carry on. Three mechanisms, for three different jobs:
+reason for the user to sit and watch you sit and watch. **Nothing that waits may
+run in the foreground** — no `sleep`, no `gh pr checks --watch`, no polling loop
+in the turn you are answering from. Waiting in a *background* job is the point,
+and the loop below sleeps freely because nobody is blocked on it. Start the
+wait, say what you started, and carry on. Three mechanisms, three jobs:
 
 | You want | Use | Why |
 |---|---|---|
@@ -330,7 +332,7 @@ stop you answering by assumption:
 
 ```bash
 gh pr view <n> --json reviews --jq '[.reviews[].author.login] | unique'   # who has reviewed
-gh pr checks <n> | grep -v '\spass\s'                                     # what is not green
+gh pr checks <n> | awk -F'\t' '$2 != "pass"'                              # what is not green
 # and the unresolved-thread query from §6.3
 ```
 
