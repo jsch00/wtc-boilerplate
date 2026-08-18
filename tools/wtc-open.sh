@@ -32,14 +32,24 @@ removes it along with the collection.
                     (claude: --dangerously-skip-permissions; a wtc is an
                     isolated worktree on its own branch, so the prompts buy
                     nothing that branch review doesn't already give)
+  --no-remote-control
+                    start claude without Remote Control. On by default: the
+                    session then appears in the Claude mobile app and on
+                    claude.ai, named for the collection. Start-time only —
+                    a session started without it cannot be attached later
   --no-agent        create the panes but start no agent
+  --no-browse       leave the browse pane at a shell prompt. By default it
+                    opens LazyVim on the collection (tools/wtc-browse.sh),
+                    which is what that pane is for — a workspace whose
+                    human pane is an empty prompt asks you to type the one
+                    command it already knows
   --focus           focus the last opened workspace (default: no focus)
 EOF
   exit 1
 }
 
 all=no list=no session="" agent_kind=claude start_agent=yes focus=no
-agent_args="" agent_args_set=no
+agent_args="" agent_args_set=no remote_control=yes start_browse=yes
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) all=yes; shift ;;
@@ -47,7 +57,9 @@ while [ $# -gt 0 ]; do
     --session) session="${2:?--session needs a name}"; shift 2 ;;
     --agent) agent_kind="${2:?--agent needs a kind}"; shift 2 ;;
     --agent-args) agent_args="${2-}"; agent_args_set=yes; shift 2 ;;
+    --no-remote-control) remote_control=no; shift ;;
     --no-agent) start_agent=no; shift ;;
+    --no-browse) start_browse=no; shift ;;
     --focus) focus=yes; shift ;;
     -h|--help) usage ;;
     -*) echo "unknown option: $1" >&2; usage ;;
@@ -146,6 +158,27 @@ open_collection() { # <collection>
   # browse / status — added to workspaces opened before they existed.
   herdr_ensure_browse_pane "$session" "$ws_id" "$dir" >/dev/null || true
 
+  # Open the browse pane on the collection. Re-query by label rather than
+  # trusting the id above: on a crowded tab that helper falls back to the
+  # shell pane, and a shell is not something to replace with a TUI.
+  if [ "$start_browse" = yes ]; then
+    browse_id="$(herdr_pane_id_by_label "$session" "$ws_id" browse)"
+    if [ -n "$browse_id" ] && command -v nvim >/dev/null 2>&1; then
+      case "$(herdr_pane_fg_name "$session" "$browse_id")" in
+        nvim)
+          : ;;   # already browsing this collection
+        ''|zsh|bash|fish|sh|nu)
+          sleep 2   # a fresh pane needs its prompt before it is typed at
+          herdr --session "$session" pane run "$browse_id" \
+            "$script_dir/wtc-browse.sh --here $name" >/dev/null || true
+          ;;
+        *)
+          : ;;   # someone's TUI is in there; leave it alone
+      esac
+    fi
+  fi
+
+
   if [ -z "$(herdr_pane_id_by_label "$session" "$ws_id" status)" ]; then
     # Prefer beside the shell (under browse). Fall back to under the shell
     # on a pre-browse workspace where the right column is already stacked.
@@ -170,12 +203,25 @@ open_collection() { # <collection>
     # Agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents.
     agent_name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-' | cut -c1-32)"
     echo "==> $name: starting $agent_kind as '$agent_name' in $agent_pane"
+    # Remote Control puts this session in the Claude mobile app and claude.ai.
+    # The whole point of a wtc agent is that it keeps working while you are not
+    # at this machine, and a collection you cannot check on from a phone misses
+    # half of that. Claude only accepts it at START time — there is no
+    # in-session toggle — so it is decided here or not at all, and the remote
+    # session is named for the collection so the mobile list reads like the
+    # workspace does. Only applies to the default claude args: --agent-args or
+    # --no-remote-control leave it off.
+    this_agent_args="$agent_args"
+    if [ "$remote_control" = yes ] && [ "$agent_args_set" = no ] && [ "$agent_kind" = claude ]; then
+      this_agent_args="$this_agent_args --remote-control $agent_name"
+    fi
+
     # A freshly created pane needs a moment before its shell is "available".
     # Intentional word-splitting: $agent_args is a flag string, not a path.
     # shellcheck disable=SC2086
     set -- start "$agent_name" --kind "$agent_kind" --pane "$agent_pane"
-    if [ -n "$agent_args" ]; then
-      set -- "$@" -- $agent_args
+    if [ -n "$this_agent_args" ]; then
+      set -- "$@" -- $this_agent_args
     fi
     n=0
     until err="$(herdr --session "$session" agent "$@" 2>&1 >/dev/null)"; do
