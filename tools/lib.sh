@@ -198,6 +198,22 @@ repo_slug_for() { # <repo-name> -> GitHub owner/repo derived from the registry r
   printf '%s\n' "${remote#*:}" | sed 's/\.git$//'
 }
 
+slug_for_worktree() { # <worktree> [repo-name] -> owner/repo
+  # Registry first, because it is a file read and answers for every repo the
+  # workspace owns. Falling back to the worktree's own remote is what makes
+  # `ext.` siblings work: they are deliberately outside the registry
+  # (instructions/worktree-workspace.md), so a registry-only lookup returns
+  # nothing and they silently lose every PR column in the table.
+  if [ -n "${2:-}" ]; then
+    slug="$(repo_slug_for "$2")"
+    if [ -n "$slug" ]; then printf '%s\n' "$slug"; return 0; fi
+  fi
+  url="$(git -C "$1" remote get-url origin 2>/dev/null)" || return 0
+  case "$url" in *github.com[:/]*) ;; *) return 0 ;; esac
+  slug="${url#*github.com}"; slug="${slug#:}"; slug="${slug#/}"
+  printf '%s\n' "${slug%.git}"
+}
+
 repo_for_issue_prefix() { # <prefix incl. trailing dash> -> repo name owning it
   awk -v pfx="$1" '
     $1 == "-" && $2 == "name:"          { cur = $3 }
@@ -489,3 +505,96 @@ EOF
   trust_mise "$dir"
   echo "wrote $dir/.env.collection (port base $base) + $dir/mise.toml"
 }
+
+# --- collection PR label ----------------------------------------------------
+# Which collection launched a PR is a fact worth keeping, and keeping it on the
+# PR rather than in a local file is what makes it survive the worktree going
+# back to the tip, the collection being retired, or the work moving machines.
+# A label is the cheapest durable place: one server-side filter answers "what
+# is this collection carrying" without any local bookkeeping to go stale.
+
+wtc_pr_label() { # [collection] -> the label this collection's PRs carry
+  name="${1:-}"
+  [ -n "$name" ] || name="${WTC_COLLECTION:-}"
+  [ -n "$name" ] || name="$(basename "$(cd "$HARNESS_DIR/.." && pwd)")"
+  printf 'wtc:%s\n' "$name"
+}
+
+wtc_pr_ensure_label() { # <slug> <label> — create it if the repo lacks it
+  command -v gh >/dev/null 2>&1 || return 0
+  if gh label list --repo "$1" --search "$2" --json name --jq '.[].name' 2>/dev/null \
+     | grep -Fxq "$2"; then
+    return 0
+  fi
+  # Colour is cosmetic and the description says why a stranger is seeing it.
+  gh label create "$2" --repo "$1" --color ededed \
+    --description "Opened from the ${2#wtc:} worktree collection" >/dev/null 2>&1 || true
+}
+
+wtc_pr_label_add() { # <slug> <pr-number> <label> — tag an existing PR
+  command -v gh >/dev/null 2>&1 || return 0
+  wtc_pr_ensure_label "$1" "$3"
+  gh pr edit "$2" --repo "$1" --add-label "$3" >/dev/null 2>&1 || true
+}
+
+wtc_pr_list() { # <collection> -> TSV rows, one per open PR this collection owns
+  # repo \t number \t checks \t merge \t review \t title
+  #
+  # checks: SUCCESS|FAILURE|ERROR|PENDING|draft|NONE
+  # merge:  mergeStateStatus (BEHIND / DIRTY / BLOCKED / CLEAN / …)
+  # review: approved | changes | <count of unresolved threads> | none
+  #
+  # One GraphQL round trip per repo returns every fact a row shows, and the
+  # repos are queried in parallel — the same shape wtc-status uses per branch.
+  #
+  # Only open PRs: a merged one is not something you act on, and the row that
+  # matters after a merge is the worktree still sitting on that branch, which
+  # wtc_pr_orphans reports instead.
+  command -v gh >/dev/null 2>&1 || return 0
+  label="$(wtc_pr_label "$1")"
+  tmp="$(mktemp -d)"
+  # Driven by the collection's worktrees rather than the registry: that covers
+  # `ext.` siblings, and it stops a two-repo collection querying every repo the
+  # workspace has ever owned.
+  for wt in "$ROOT/$1"/*/; do
+    wt="${wt%/}"
+    [ -e "$wt/.git" ] || continue
+    repo="$(basename "$wt")"
+    [ "$repo" = harness ] && repo="$(harness_repo)"
+    slug="$(slug_for_worktree "$wt" "$repo")"
+    [ -n "$slug" ] || continue
+    (
+      gh api graphql -F owner="${slug%%/*}" -F name="${slug#*/}" -F label="$label" -f query='
+        query($owner:String!,$name:String!,$label:String!){
+          repository(owner:$owner,name:$name){
+            pullRequests(labels:[$label],states:OPEN,first:20,
+                         orderBy:{field:UPDATED_AT,direction:DESC}){
+              nodes{
+                number title isDraft mergeStateStatus reviewDecision
+                reviewThreads(first:100){nodes{isResolved isOutdated}}
+                commits(last:1){nodes{commit{statusCheckRollup{state}}}}
+              }}}}' --jq '
+        .data.repository.pullRequests.nodes[] | [
+          (.number|tostring),
+          (if .isDraft then "draft"
+           else (.commits.nodes[0].commit.statusCheckRollup.state // "NONE") end),
+          (.mergeStateStatus // "UNKNOWN"),
+          (([.reviewThreads.nodes[] | select((.isResolved|not) and (.isOutdated|not))] | length) as $open
+            | if $open > 0 then ($open|tostring)
+              elif .reviewDecision == "APPROVED" then "approved"
+              elif .reviewDecision == "CHANGES_REQUESTED" then "changes"
+              else "none" end),
+          (.title // "")
+        ] | @tsv' 2>/dev/null \
+        | awk -v r="$repo" 'NF { print r "\t" $0 }' > "$tmp/$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')" 2>/dev/null || :
+    ) &
+  done
+  wait 2>/dev/null || true
+  cat "$tmp"/* 2>/dev/null || true
+  rm -rf "$tmp"
+}
+
+# NOTE: wtc-status derives "worktree still on a branch whose PR has gone" from
+# the per-branch PR cache it already fills, so there is no separate orphan
+# query here. Kept out deliberately rather than left as a second code path
+# that would drift from the one the table actually uses.
