@@ -91,8 +91,14 @@ if herdr_present; then
     fi
   fi
 fi
-# Match the absolute tools path so we do not touch other workspaces' status.
-pkill -f "$dest_root/harness/tools/wtc-status\\.sh" 2>/dev/null || true
+# Kill any wtc-status --watch still bound to *this* harness's tools path.
+# Match by fixed substring, not pkill's regex — paths can contain `.`, `+`, etc.
+status_needle="$dest_root/harness/tools/wtc-status.sh"
+while read -r pid args; do
+  case "$args" in *"$status_needle"*) kill "$pid" 2>/dev/null || true ;; esac
+done <<EOF
+$(ps ax -o pid=,args= 2>/dev/null || true)
+EOF
 
 # .env.collection.local is the collection-scoped secrets tier — it dies with
 # the collection (credentials scoped to this wtc's work have nowhere to go).
