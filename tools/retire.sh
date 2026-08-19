@@ -89,7 +89,10 @@ if herdr_present; then
   fi
 fi
 
-rm -f "$dest_root/HANDOFF.md" "$dest_root/.env.collection" "$dest_root/mise.toml" "$dest_root/.DS_Store"
+# .env.collection.local is the collection-scoped secrets tier — it dies with
+# the collection (credentials scoped to this wtc's work have nowhere to go).
+rm -f "$dest_root/HANDOFF.md" "$dest_root/.env.collection" \
+  "$dest_root/.env.collection.local" "$dest_root/mise.toml" "$dest_root/.DS_Store"
 # Generated skill-link dirs (link-skills.sh) — symlinks into harness/skills,
 # nothing of their own. Without this the rmdir below always finds them and
 # reports the collection as "left in place".

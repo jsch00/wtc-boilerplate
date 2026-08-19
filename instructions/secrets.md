@@ -15,6 +15,14 @@ checkouts, and copies-per-collection means a rotated credential is stale in
 every collection you did not think to update. One canonical copy per file,
 **symlinked** into worktrees, is immediately current everywhere.
 
+That holds for anything that rotates, and it leaves nowhere to put a
+credential scoped to **one collection's work** — a throwaway sandbox key made
+for a single investigation, say. Putting that in the control root hands it to
+every collection on the machine. So there is a second, narrower tier
+alongside it (see "Collection-scoped secrets"). The rule of thumb: **rotates
+for the machine → control root; belongs to this piece of work →
+collection-scoped.**
+
 `WTC_CONFIG_ROOT` is exported in every collection's `.env.collection`
 (default `~/.config/wtc`). Files are stored at their repo-relative
 path, so linking is mechanical.
@@ -49,6 +57,46 @@ Doing it by hand is `ln -sfn <control-root>/<repo>/<path> <worktree>/<path>`
 (`-sfn`, not `-sf`: if the target is ever a directory, `-sf` drops the link
 *inside* it). Verify with `git status` afterwards either way — a linked
 secret that shows up as untracked means the ignore rule is missing.
+
+## Collection-scoped secrets
+
+```text
+<collection>/.env.collection.local     # 600, seeded empty once, then hand-authored
+```
+
+Created empty by `write_collection_env` and **never rewritten**, unlike its
+neighbour `.env.collection`, which is regenerated wholesale on every
+`branch-off` — anything hand-added *there* is lost (and that file is not
+chmod'd; its mode follows the caller's umask). The collection root is not a
+git repo, so `.env.collection.local` cannot be committed by accident.
+`retire.sh` deletes it with the collection — secrets scoped to this wtc die
+with it.
+
+`mise.toml` lists it second, so it composes with (and wins over) the generated
+env:
+
+```toml
+[env]
+_.file = [".env.collection", ".env.collection.local"]
+```
+
+Without mise (including `tools/wtc-open.sh`, which injects both into herdr):
+`set -a; . ./.env.collection; . ./.env.collection.local; set +a`.
+
+Two limits worth knowing before reaching for it:
+
+- **It is collection-scoped, not repo-scoped.** Every repo in the collection
+  inherits the variables, unlike the control root, which is stored per repo.
+- **It holds variables, not files.** A per-collection secret *file* — a
+  certificate, or a config the app reads directly — has no tier yet; the shape
+  would be a `collections/<name>/<repo>/<path>` overlay that
+  `link-secrets.sh` walks after the shared tier. Deliberately unbuilt until
+  something needs it, because a whole-file override forces the collection copy
+  to duplicate everything else in that file — the rotation problem the shared
+  tier exists to avoid.
+
+Rotating a collection-scoped secret is by hand, in that one file. That is the
+trade: no shared copy to keep current, and no shared blast radius either.
 
 ## Rules
 

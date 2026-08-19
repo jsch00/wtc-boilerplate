@@ -39,7 +39,8 @@ git -C <collection>/<repo> log --oneline @{u}..HEAD
   push it, or establish deliberately that it is disposable.
 - Anything else at the collection root that isn't generated
   (`.env.collection`, `mise.toml`, `.harness-backups/`, the skill link dirs)
-  deserves a look before it disappears.
+  deserves a look before it disappears. `.env.collection.local` is removed
+  with the collection on purpose — those secrets were scoped to this wtc.
 
 `.harness-backups/` holds hand-made copies of files that `link-secrets.sh`
 replaced. If anything in there matters, it belongs in the control root — copy
