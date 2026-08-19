@@ -78,6 +78,9 @@ for wt in "$dest_root"/*/; do
 done
 
 # Close the collection's herdr workspace, if one is open (view only, no state).
+# Also kill any wtc-status --watch still bound to *this* harness's tools path —
+# another collection may have been opened via this one, and its status pane
+# would otherwise keep awk'ing the registry we are about to delete.
 if herdr_present; then
   herdr_session="$(herdr_session_name)"
   if herdr_session_running "$herdr_session"; then
@@ -88,6 +91,8 @@ if herdr_present; then
     fi
   fi
 fi
+# Match the absolute tools path so we do not touch other workspaces' status.
+pkill -f "$dest_root/harness/tools/wtc-status\\.sh" 2>/dev/null || true
 
 # .env.collection.local is the collection-scoped secrets tier — it dies with
 # the collection (credentials scoped to this wtc's work have nowhere to go).

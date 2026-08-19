@@ -24,6 +24,9 @@ harness_repo() {
 }
 
 registry_field() { # <repo-name> <field> — one scalar field from the repo's block
+  # Soft-fail when the file is gone (a status --watch still running after its
+  # harness worktree was retired) rather than dumping awk noise into the table.
+  [ -f "$REGISTRY" ] || return 0
   awk -v repo="$1" -v field="$2:" '
     $1 == "-" && $2 == "name:"   { cur = $3 }
     cur == repo && $1 == field   { print $2; exit }
@@ -31,6 +34,7 @@ registry_field() { # <repo-name> <field> — one scalar field from the repo's bl
 }
 
 registry_all_names() {
+  [ -f "$REGISTRY" ] || return 0
   awk '$1 == "-" && $2 == "name:" { print $3 }' "$REGISTRY"
 }
 

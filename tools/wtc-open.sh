@@ -179,7 +179,11 @@ open_collection() { # <collection>
           # `pane run` takes a shell command string, so both halves are quoted:
           # a collection directory may contain spaces, and anything unquoted
           # here would be evaluated by that pane's shell.
-          printf -v browse_cmd '%q --here %q' "$script_dir/wtc-browse.sh" "$name"
+          # The target collection's own tools — not this script's. Opening
+          # collection B via collection A's wtc-open used to leave B's status
+          # pane bound to A's harness path; retiring A then made B's table
+          # spam awk errors and measure against the wrong tip.
+          printf -v browse_cmd '%q --here %q' "$dir/harness/tools/wtc-browse.sh" "$name"
           herdr --session "$session" pane run "$browse_id" \
             "$browse_cmd" >/dev/null || true
           ;;
@@ -205,7 +209,7 @@ open_collection() { # <collection>
       herdr --session "$session" pane rename "$status_pane" status >/dev/null
       sleep 2   # let the shell reach its prompt before it is typed at
       printf -v status_cmd '%q --repos --watch 120 %q' \
-        "$script_dir/wtc-status.sh" "$name"
+        "$dir/harness/tools/wtc-status.sh" "$name"
       herdr --session "$session" pane run "$status_pane" \
         "$status_cmd" >/dev/null
     fi

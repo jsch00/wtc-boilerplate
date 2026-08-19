@@ -73,6 +73,18 @@ HARNESS_DIR="$(dirname "$script_dir")"
 . "$script_dir/lib.sh"
 harness_lib_init
 
+# Scoped runs take the *target* collection's registry, not whichever harness
+# worktree this script happened to be launched from. Opening collection B via
+# A's tools (or a --watch that outlived A's retire) must still read B's tips.
+if [ -n "$only" ]; then
+  coll_harness="$ROOT/$only/harness"
+  if [ -f "$coll_harness/.harness-repos.yml" ]; then
+    HARNESS_DIR="$coll_harness"
+    REGISTRY="$coll_harness/.harness-repos.yml"
+    LOCAL_REPOS="$coll_harness/.harness-repos"
+  fi
+fi
+
 # Clicking needs the collection table (that is what carries the cells) and a
 # terminal on both ends: mouse reports come back in on stdin.
 if [ "$click" = auto ]; then
