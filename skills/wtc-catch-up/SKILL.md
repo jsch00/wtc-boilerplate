@@ -1,6 +1,6 @@
 ---
 name: wtc-catch-up
-description: Bring a worktree collection up to date with its remotes — fetch and prune every bare owner, move detached worktrees onto the new development tip, return worktrees whose PR has merged to the tip and prune the local branch, report how far live branches have drifted, and re-link secrets and harness skills. Use when a collection looks stale or shows ↓ in the status table, after a PR merges, before opening a PR, after being away from a wtc, or when the user asks to sync, update, pull, or refresh the workspace.
+description: Bring a worktree collection up to date with its remotes — fetch and prune every worktree owner (bare, or an unmanaged sibling's external clone), move detached worktrees onto the new development tip, return worktrees whose PR has merged to the tip and prune the local branch, merge the tip into live branches so they stop drifting and push that merge to any open PR, and re-link secrets and harness skills. Use when a collection looks stale or shows ↓ in the status table, after a PR merges, before opening a PR, after being away from a wtc, or when the user asks to sync, update, pull, or refresh the workspace.
 ---
 
 # Catch a wtc up
@@ -11,7 +11,9 @@ what it is checked out on. Catch-up is also not git-only — files and skills
 that reached the harness or the control root after this collection was created
 never arrive on their own.
 
-Read-mostly and safe: nothing here rewrites history or touches a dirty tree.
+Safe by construction: nothing here rewrites history, force-pushes, or
+touches a dirty tree. The only writes are fast-forwards, re-detaching, and
+merging a base forward — none of which can lose or reorder a commit.
 
 ## 1. Fetch every owner
 
@@ -65,13 +67,14 @@ gh pr view --json state,url 2>/dev/null                # only if on a branch
 | **Detached** and dirty | Nothing. Report it — someone is mid-edit with no branch yet. |
 | On a branch, **PR merged**, clean, nothing outside the base | §2.1 — return to tip, prune the local ref. |
 | On a branch, **PR merged**, but dirty or with post-merge commits | §2.2 — that is follow-up work; give it a branch of its own first. |
-| On a **live** branch (no PR, or PR open) | Nothing. Report ahead/behind; merging the tip in is the branch owner's call. |
+| On a **live** branch (no PR, or PR open) and clean | §2.3 — merge the base in, so the branch does not drift; §2.3.1 pushes it when a PR is open. |
+| On a **live** branch and dirty | Nothing. Report ahead/behind — never merge into a dirty tree. |
 | Mid-merge / mid-rebase / mid-cherry-pick | Nothing. Report it — someone is in the middle of something. |
 | On a repo's default **branch** (legacy shape) | `git -C <wt> merge --ff-only @{u}` if clean, and suggest detaching so the branch stops being pinned to this collection. |
 
-**Never rebase, never merge automatically, never touch a dirty tree.**
-Fast-forwards and re-detaching are the only automatic moves, because they are
-the only ones that cannot lose or reorder anything.
+**Never rebase, never force-push, never touch a dirty tree.** Merging a base
+forward either fast-forwards or creates a merge commit; rebasing a live branch
+would rewrite the per-issue record, which is the one thing catch-up must not do.
 
 ### 2.1 A merged branch: back to the tip, prune the local ref
 
@@ -109,6 +112,55 @@ Uncommitted changes survive a `checkout --detach` as long as they don't
 conflict; if git refuses, leave the worktree alone and report it. Pick a
 follow-up name that says what the work is — and say in your report that you
 renamed it, since nobody asked you to name anything.
+
+### 2.3 A live branch: merge the base forward
+
+A branch that is still being worked on drifts from its base every time
+something lands. Left alone it drifts until the next PR is a conflict
+resolution rather than a review, so catch-up brings the base to it:
+
+```bash
+git -C <wt> status --porcelain            # must be empty
+git -C <wt> merge --no-edit <default_ref>
+```
+
+Merge, never rebase — the branch may already be pushed and under review, and
+rebasing detaches review comments as well as rewriting history.
+
+**Conflicts are where this stops.** Abort and hand it back rather than
+resolving them mid-catch-up; the branch owner knows which side wins, and a
+catch-up is not the moment to be making that call:
+
+```bash
+git -C <wt> merge --abort
+```
+
+Then report the conflicting paths and let the user decide.
+
+### 2.3.1 If the branch has an open PR, push the merge
+
+A branch with an open PR is already public, and a merge that sits unpushed
+leaves reviewers reading the change against a base nobody is on any more. That
+is the stale-base review round this whole section exists to prevent, so do not
+be hesitant here — push it:
+
+```bash
+gh pr view --json state -q .state          # OPEN?
+git -C <wt> push
+```
+
+Yes, this reruns the PR's checks. That is the point: a green build against a
+base two weeks old is not information. Re-running against current code is what
+makes the check mean something.
+
+Two things this is not licence for. **Never force-push** — it detaches existing
+review comments, and a base merge never needs one anyway. And if `push` refuses
+because the upstream is wrong or the remote has commits you don't, stop and
+report rather than reaching for `--force`; someone else may be pushing to the
+same branch.
+
+A branch with **no PR yet** is a different case: leave the merge local. Its
+first push is `wtc-pr`'s, together with opening the PR.
 
 ## 3. Re-link machine-local secrets
 
@@ -160,13 +212,14 @@ ahead/behind counts, and tree state. Call out explicitly anything you
 **deleted or renamed** — a pruned local ref or a follow-up branch — even
 though both are recoverable, because neither was asked for.
 
-Then, in one line: anything that needs a human — dirty trees, live branches
-far behind their base, a refused secret link, a `branch -d` that refused, a
+Then, in one line: anything that needs a human — dirty trees, a merge that
+aborted on conflicts, a refused secret link, a `branch -d` that refused, a
 repo mid-rebase.
 
-If a live branch is far enough behind that its next PR would conflict, say so
-and recommend merging the tip into it (via the `wtc-pr` skill's §3) rather
-than doing it unasked.
+For every live branch you merged into (§2.3), say so, and name the PR you
+pushed the merge to — its checks are now rerunning because of you. For a
+branch with no PR, give the unpushed count instead. A merge that aborted on
+conflicts is the first thing a human needs to see.
 
 ---
 Canon: `harness/AGENTS.md` → Catch-up rules,
