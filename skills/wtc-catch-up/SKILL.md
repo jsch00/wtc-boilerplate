@@ -1,6 +1,6 @@
 ---
 name: wtc-catch-up
-description: Bring a worktree collection up to date with its remotes — fetch and prune every worktree owner (bare, or an unmanaged sibling's external clone), move detached worktrees onto the new development tip, return worktrees whose PR has merged to the tip and prune the local branch, merge the tip into live branches so they stop drifting and push that merge to any open PR, and re-link secrets and harness skills. Use when a collection looks stale or shows ↓ in the status table, after a PR merges, before opening a PR, after being away from a wtc, or when the user asks to sync, update, pull, or refresh the workspace.
+description: Bring a worktree collection up to date with its remotes — fetch and prune every worktree owner (bare, or an unmanaged sibling's external clone), move detached worktrees onto the new development tip, return worktrees whose PR has merged to the tip and prune the local branch, merge the tip into live branches so they stop drifting and push that merge to any open PR, re-link secrets and harness skills, and refresh the collection env. Use when a collection looks stale or shows ↓ in the status table, after a PR merges, before opening a PR, after being away from a wtc, or when the user asks to sync, update, pull, or refresh the workspace.
 ---
 
 # Catch a wtc up
@@ -191,6 +191,67 @@ reports `(none)`, the harness worktree is behind rather than the tool being
 broken. To roll a newly landed skill out across every collection at once —
 each of which must be caught up first — `harness/tools/link-skills.sh --all`.
 
+## 4.5 Refresh the collection env
+
+```bash
+harness/tools/refresh-env.sh
+```
+
+`.env.collection` is written by `write_collection_env`, and only `branch-off`
+(new collection) and `add-repo` (only when the file is missing) ever call it.
+So a variable added to the generator since — a port for a newly registered
+repo, `GH_CONFIG_DIR` — reaches new collections only, and every older
+collection stays stale indefinitely. This is the missing half.
+
+Same ordering rule as the skills above: it runs **this collection's**
+`harness/` generator, so it must come *after* step 2 moved that worktree.
+
+It preserves the collection's port base, so ports do not move, and leaves
+`.env.collection.local` alone. It regenerates `.env.collection` wholesale,
+which is that file's documented contract — hand-authored values belong in
+`.env.collection.local`, which wins on a conflicting key. `--dry-run` shows
+the diff and writes nothing; `--all` sweeps every collection.
+
+**Already-open herdr panes do not pick this up.** `wtc-open.sh` injects the
+env at workspace *creation* and skips that block when reusing an open
+workspace, so a pane keeps whatever it started with. Close and reopen the
+workspace, or export by hand in the pane.
+
+## 4.6 Ambient CLI credentials — ask, once, and only when it is new
+
+`gh`, `twg` and `jira` each resolve one credential store per machine, so by
+default every project on the machine shares whichever account is logged in.
+The harness can give this workspace its own store instead, opt-in by presence
+(`harness/instructions/secrets.md` → Tool identity).
+
+Catch-up is when a workspace usually *discovers* this option, because the
+generator learned to emit those variables in a version newer than the
+collection. So check whether the choice has been made:
+
+```bash
+ls -d "${WTC_CONFIG_ROOT:-$HOME/.config/wtc}"/gh 2>/dev/null   # opted in?
+grep -c GH_CONFIG_DIR .env.collection 2>/dev/null              # in effect here?
+```
+
+- **Store exists** → nothing to ask. §4.5 already emitted the variables.
+- **Store absent, and the collection is otherwise up to date** → nothing to
+  ask either. Do not raise it on every catch-up; a workspace that has said no
+  once should not be asked again.
+- **Store absent, and §4.5 just moved this collection onto a generator that
+  understands tool identity** → this is the one moment worth a question. Ask
+  the user how they want ambient CLI creds handled, and offer the two answers
+  plainly:
+
+  | Answer | What you do |
+  |---|---|
+  | *Machine-global is fine — this is the only thing I use `gh` for* | Nothing. Say so in the report and move on. |
+  | *Scope it to this workspace* | `mkdir -p "$WTC_CONFIG_ROOT"/gh`, re-run `refresh-env.sh`, then tell them to `gh auth login` from inside a collection |
+
+**Do not run `gh auth login` for them, and do not create the store without
+being asked.** Creating it *is* the opt-in, and turning it on logs them out
+inside every collection until they re-auth — a surprise no catch-up should
+spring on someone. Report the choice offered and the answer taken.
+
 ## 5. Local refs left over from earlier work
 
 §2.1 prunes the branch of the worktree it moved. Other local branches in the
@@ -220,6 +281,12 @@ For every live branch you merged into (§2.3), say so, and name the PR you
 pushed the merge to — its checks are now rerunning because of you. For a
 branch with no PR, give the unpushed count instead. A merge that aborted on
 conflicts is the first thing a human needs to see.
+
+If §4.5 changed `.env.collection`, say which variables moved — a port that
+shifted or a tool-identity variable that appeared changes what an already-open
+herdr pane is running with, and only a reopened workspace picks it up. If §4.6
+asked about ambient credentials, report the question and the answer; if it did
+not ask, say nothing about it.
 
 ---
 Canon: `harness/AGENTS.md` → Catch-up rules,

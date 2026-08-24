@@ -50,17 +50,25 @@ Note the lifecycle gap this leaves on its own: hooks run at worktree
 that already exist. Catch-up closes it by re-running the same tool
 (`AGENTS.md` → Catch-up rules).
 
+`.env.collection` has the same gap for the same reason — it is generated at
+collection creation and never revisited, so a variable the generator learned
+afterwards reaches new collections only. `tools/refresh-env.sh` is that file's
+version of the same "run it again" tool, and catch-up runs it too.
+
 ## Collection env and ports
 
 `branch-off.sh` allocates each collection a **port block** — the lowest free
 `42000 + 100·n` across existing collections — and writes two generated,
 uncommitted files at the collection root:
 
-- `.env.collection` — `WTC_COLLECTION`, `COLLECTION_PORT_BASE`, and one
-  `<REPO>_PORT` per registry repo with a `port_offset` (e.g. `api`
-  offset 1 → `API_PORT=42001`). Ports are emitted for *all* such
-  repos, present or not, so a frontend can always resolve the API port —
-  point absent services at a shared dev instance or start them on demand.
+- `.env.collection` — `WTC_COLLECTION`, `WTC_CONFIG_ROOT`,
+  `COLLECTION_PORT_BASE`, and one `<REPO>_PORT` per registry repo with a
+  `port_offset` (e.g. `api` offset 1 → `API_PORT=42001`). Ports are emitted
+  for *all* such repos, present or not, so a frontend can always resolve the
+  API port — point absent services at a shared dev instance or start them on
+  demand. It also carries the optional tool-identity variables
+  (`GH_CONFIG_DIR` and friends) when the workspace has opted into them —
+  `secrets.md` → Tool identity.
 - `mise.toml` — loads `.env.collection` via `[env] _.file`. mise treats the
   collection root as a parent config, so **every sibling repo worktree
   inherits these variables automatically** in any mise-activated shell or
@@ -91,3 +99,4 @@ and stable — they are the contract between repos.
 | Collection created | `tools/branch-off.sh` | `init` for every included repo (after env is written and skills are linked) |
 | Repo added later | `tools/add-repo.sh` | `init` for the new repos only |
 | Collection retired | `tools/retire.sh` | `teardown` for every repo, then worktrees removed (pre-flight refuses on dirty/unpushed work unless `--force`; branches are never deleted) |
+| Generator or registry changed | `tools/refresh-env.sh` | none — regenerates `.env.collection`, preserving the port base |
