@@ -20,6 +20,12 @@
 #   * catch-up       — picks up skills added to the harness since the
 #                      collection was created, and prunes ones removed since
 #
+# It also installs the collection's entry point, which is what an agent opening
+# this directory reads before anything else:
+#
+#   <collection>/AGENTS.md -> harness/collection-AGENTS.md   (versioned, shared)
+#   <collection>/WTC-SCOPE.md                                (--seed-scope, local)
+#
 # Bash 3.2-safe (macOS default): no mapfile, no associative arrays.
 set -euo pipefail
 
@@ -35,6 +41,7 @@ SKILL_ROOTS=".claude/skills .agents/skills"
 collection="$(dirname "$HARNESS_DIR")"
 harness_dirname="$(basename "$HARNESS_DIR")"
 dry_run=no
+seed_scope=no
 all=no
 
 usage() {
@@ -45,6 +52,10 @@ Links a collection's own harness/skills/* into its .claude/skills and
 .agents/skills so Claude Code, Codex, and Cursor all discover them.
 Idempotent.
 
+  --seed-scope        Also write WTC-SCOPE.md from harness/collection-SCOPE.md
+                      when the collection has none. Local and ephemeral, so it
+                      is seeded (branch-off, /wtc-start) rather than linked,
+                      and an existing one is never touched.
   --collection <dir>  Collection to wire (default: the one holding this
                       harness worktree).
   --all               Every collection under the workspace root. Use after
@@ -68,6 +79,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --collection) collection="${2:?--collection needs a directory}"; shift 2;;
     --all)        all=yes; shift;;
+    --seed-scope) seed_scope=yes; shift;;
     --dry-run)    dry_run=yes; shift;;
     -h|--help)    usage; exit 0;;
     *) echo "error: unknown option: $1 (use --help)" >&2; exit 1;;
@@ -198,4 +210,64 @@ done
 
 echo
 echo "linked=$linked already-current=$current pruned=$pruned skipped=$skipped"
+
+# The collection entry point. An agent started at the collection root reads
+# AGENTS.md there and nothing else automatically — not harness/AGENTS.md, not
+# instructions/ — so that file is where the geometry, the isolation rule and
+# the pointer to this collection's scope have to live. It is authored once as
+# harness/collection-AGENTS.md — named for where it lands, since a file called
+# AGENTS.md in the harness would be read as instructions for that folder — and
+# linked, like the skills: relative, so it resolves against this collection's
+# own harness worktree.
+entry_src="$collection/$harness_dirname/collection-AGENTS.md"
+entry_dest="$collection/AGENTS.md"
+entry_rel="$harness_dirname/collection-AGENTS.md"
+if [ -f "$entry_src" ]; then
+  if [ -L "$entry_dest" ] && [ "$(readlink "$entry_dest")" = "$entry_rel" ]; then
+    echo "entry: AGENTS.md already-current"
+  elif [ -e "$entry_dest" ] && [ ! -L "$entry_dest" ]; then
+    echo "entry: skip AGENTS.md (a real file is there, not a link)" >&2
+  elif [ "$dry_run" = yes ]; then
+    echo "entry: would link AGENTS.md -> $entry_rel"
+  else
+    ln -sfn "$entry_rel" "$entry_dest"
+    echo "entry: linked AGENTS.md -> $entry_rel"
+  fi
+fi
+
+# WTC-SCOPE.md says what THIS collection is for. It is per-collection and dies
+# with it, so it is a seeded copy rather than a link — and it is seeded only on
+# request (branch-off, /wtc-start): an unfilled template in a live collection
+# would be worse than no file, since an agent would read the placeholders as
+# the scope. An existing scope file is never overwritten; widening the scope is
+# the user's edit to make.
+scope_tpl="$collection/$harness_dirname/collection-SCOPE.md"
+scope_dest="$collection/WTC-SCOPE.md"
+if [ "$seed_scope" = yes ] && [ -f "$scope_tpl" ]; then
+  if [ -e "$scope_dest" ]; then
+    echo "scope: WTC-SCOPE.md already there — left alone"
+  elif [ "$dry_run" = yes ]; then
+    echo "scope: would seed WTC-SCOPE.md from the template"
+  else
+    # The repo table is the one part the tooling knows better than the agent:
+    # what is actually checked out here, right now.
+    {
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          *"{{REPOS}}"*)
+            printf '| Repo | Why it is here |\n|---|---|\n'
+            for wt in "$collection"/*/; do
+              wt="${wt%/}"
+              [ -e "$wt/.git" ] || continue
+              printf '| `%s` |  |\n' "$(basename "$wt")"
+            done
+            ;;
+          *) printf '%s\n' "$line" ;;
+        esac
+      done < "$scope_tpl"
+    } | sed "s/{{COLLECTION}}/$(basename "$collection")/g" > "$scope_dest"
+    echo "scope: seeded WTC-SCOPE.md"
+  fi
+fi
+
 exit 0
