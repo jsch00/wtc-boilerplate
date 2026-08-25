@@ -15,12 +15,15 @@ harness/tools/wtc-status.sh
 ```
 
 Prints, per repo in the collection: branch, open PR with its check rollup
-(`✓ ✗ ● —`), and working-tree state.
+(`✓ ✗ ● —`), and working-tree state. Bare is the command to reach for: scope
+is this collection, and `--repos` / `--watch` / `--no-click` default from
+`$WTC_CONFIG_ROOT/wtc.env`. Captured output prints one pass, so reading the
+table from an agent shell never hangs on a watch loop.
 
 ## Everything at once
 
 ```bash
-harness/tools/wtc-status.sh --repos             # all collections
+harness/tools/wtc-status.sh --all               # every collection
 harness/tools/wtc-status.sh --procs             # processes under the herdr session
 harness/tools/wtc-status.sh --repos --watch 120 # for a human to leave open
 ```

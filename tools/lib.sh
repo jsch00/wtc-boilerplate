@@ -250,6 +250,34 @@ port_var_for() { # <repo-name> -> env var name, e.g. console -> CONSOLE_PORT
 # when herdr is not installed.
 # ---------------------------------------------------------------------------
 
+# The collection this harness worktree lives in. Every wtc tool defaults to
+# it — a bare `tools/wtc-xyz.sh` acts here, and only an explicit --all or a
+# named collection widens that (instructions/collection-context.md).
+this_collection_dir() {
+  (cd "$HARNESS_DIR/.." && pwd)
+}
+
+this_collection() {
+  basename "$(this_collection_dir)"
+}
+
+# Machine-wide tool defaults, in the control root next to the secrets:
+# $WTC_CONFIG_ROOT/wtc.env. The one place a changed default belongs, so a bare
+# `tools/wtc-xyz.sh` keeps doing what this machine wants without flags in every
+# command line. CLI flags still win. See instructions/secrets.md.
+load_wtc_config() {
+  : "${WTC_CONFIG_ROOT:=$HOME/.config/wtc}"
+  if [ -f "$WTC_CONFIG_ROOT/wtc.env" ]; then
+    # shellcheck disable=SC1091
+    . "$WTC_CONFIG_ROOT/wtc.env"
+  fi
+  : "${WTC_AGENT_KIND:=claude}"
+  : "${WTC_AGENT_ARGS:=}"
+  : "${WTC_STATUS_REPOS:=no}"
+  : "${WTC_STATUS_WATCH:=60}"
+  : "${WTC_STATUS_NO_CLICK:=no}"
+}
+
 herdr_present() { command -v herdr >/dev/null 2>&1; }
 
 herdr_session_name() { # workspace-root basename minus a trailing "-harness"

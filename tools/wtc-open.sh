@@ -59,14 +59,14 @@ EOF
   exit 1
 }
 
-all=no list=no dry_run=no session="" agent_kind=claude start_agent=yes focus=no
+all=no list=no dry_run=no session="" agent_kind="" agent_kind_set=no start_agent=yes focus=no
 agent_args="" agent_args_set=no remote_control=yes start_browse=yes start_status=yes
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) all=yes; shift ;;
     --list) list=yes; shift ;;
     --session) session="${2:?--session needs a name}"; shift 2 ;;
-    --agent) agent_kind="${2:?--agent needs a kind}"; shift 2 ;;
+    --agent) agent_kind="${2:?--agent needs a kind}"; agent_kind_set=yes; shift 2 ;;
     --agent-args) agent_args="${2-}"; agent_args_set=yes; shift 2 ;;
     --no-remote-control) remote_control=no; shift ;;
     --dry-run) dry_run=yes; shift ;;
@@ -88,6 +88,13 @@ harness_lib_init
 herdr_present || { echo "error: herdr is not installed (see instructions/herdr.md)" >&2; exit 1; }
 [ -n "$session" ] || session="$(herdr_session_name)"
 
+# Machine defaults from the control root; flags still win (instructions/secrets.md).
+load_wtc_config
+[ "$agent_kind_set" = yes ] || agent_kind="$WTC_AGENT_KIND"
+if [ "$agent_args_set" = no ] && [ -n "${WTC_AGENT_ARGS:-}" ]; then
+  agent_args="$WTC_AGENT_ARGS"
+  agent_args_set=yes
+fi
 if [ "$agent_args_set" = no ] && [ "$agent_kind" = claude ]; then
   agent_args="--dangerously-skip-permissions"
 fi
@@ -348,8 +355,9 @@ open_collection() { # <collection>
         if [ "$dry_run" = yes ]; then
           note "status empty → would start wtc-status"
         else
-          printf -v status_cmd '%q --repos --watch 120 %q' \
-            "$dir/harness/tools/wtc-status.sh" "$name"
+          # --repos is the pane's intent (the process table is its own pane);
+          # the interval, click and scope come from wtc-status itself now.
+          printf -v status_cmd '%q --repos' "$dir/harness/tools/wtc-status.sh"
           if herdr_pane_run_idle "$session" "$(herdr_row_col "$rows" status 2)" \
                "$status_cmd" "$settle"; then
             note "status started"

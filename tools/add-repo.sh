@@ -4,10 +4,13 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: tools/add-repo.sh [-b <branch>] [--tip] <collection> <repo> [<repo> ...]
+Usage: tools/add-repo.sh [-b <branch>] [--collection <name>] <repo> [<repo> ...]
 
-Adds worktrees for the named repos (names as in .harness-repos.yml) to an
-existing collection, cloning missing bare owners from GitHub first, then runs
+The collection is THIS one — the one holding this harness worktree — unless
+--collection names another. Every argument is a repo.
+
+Adds worktrees for the named repos (names as in .harness-repos.yml) to a
+collection, cloning missing bare owners from GitHub first, then runs
 each new repo's init hook. The collection env (.env.collection) already
 covers all registry repos' ports, so no re-wiring is needed.
 
@@ -15,6 +18,7 @@ New worktrees are DETACHED AT THE DEVELOPMENT TIP — no branch is created;
 `git switch -c <issue-id>-<slug>` at the first commit. A repo added purely for
 context (reading a sibling's code) then never grows a branch at all.
 
+  --collection NAME  another collection under the workspace root
   -b <branch>   create/check out this branch instead of detaching at the tip.
                 An existing branch of that name is checked out, otherwise it
                 is created from the repo's default_ref
@@ -23,23 +27,35 @@ EOF
   exit 1
 }
 
-branch=""
+branch="" collection=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -b) branch="${2:?-b needs a value}"; shift 2 ;;
+    --collection) collection="${2:?--collection needs a name}"; shift 2 ;;
     --tip) echo "note: --tip is the default now (detached at the tip); ignoring" >&2; shift ;;
     -h|--help) usage ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) break ;;
   esac
 done
-[ $# -ge 2 ] || usage
-collection="$1"; shift
+[ $# -ge 1 ] || usage
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="$(dirname "$script_dir")"
 . "$script_dir/lib.sh"
 harness_lib_init
+
+[ -n "$collection" ] || collection="$(this_collection)"
+
+# The old signature put the collection first. Say so plainly instead of
+# looking for a registry repo named after a collection folder.
+for repo in "$@"; do
+  if [ -d "$ROOT/$repo/harness" ]; then
+    echo "error: '$repo' is a collection, not a repo. add-repo acts on this" >&2
+    echo "       collection; pass --collection $repo to target that one." >&2
+    exit 1
+  fi
+done
 
 dest_root="$ROOT/$collection"
 [ -d "$dest_root/harness" ] || { echo "error: $dest_root is not a collection (no harness/)" >&2; exit 1; }

@@ -20,6 +20,29 @@ esac
 Cheaper heuristic (no git needed): a sibling `../harness/AGENTS.md` exists →
 you are in a collection; the collection root is `..`.
 
+## Tool scope
+
+Every `tools/*.sh` acts on **this** collection — the one holding the harness
+worktree it was run from — when you give it no scope. Widening is always
+something you typed: `--all`, or a collection name. So a bare
+`./harness/tools/wtc-xyz.sh` is the safe command to reach for, and it is also
+the useful one.
+
+| Tool | Bare run | Wider |
+|---|---|---|
+| `wtc-status.sh` | this collection | `--all`, `<collection>` |
+| `wtc-open.sh` | this collection's workspace | `--all`, `<collection> …` |
+| `wtc-browse.sh` | this collection in nvim | `<collection>` |
+| `add-repo.sh` | this collection | `--collection <name>` |
+| `link-skills.sh`, `link-secrets.sh`, `refresh-configs.sh` | this collection | `--collection <name>`, `--all` (link-skills) |
+
+Two tools are outside the rule by nature, and say so: `branch-off.sh` creates a
+new collection, and `retire.sh` needs the name of the collection to destroy —
+it refuses to run from inside its own target.
+
+A default you want changed on this machine belongs in `$WTC_CONFIG_ROOT/wtc.env`
+([secrets.md](secrets.md)), not in flags you have to remember every time.
+
 ## The two files at the root
 
 | File | Kind | Says |
