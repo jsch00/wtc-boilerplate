@@ -81,7 +81,14 @@ if [ -z "$config_root" ] && [ -f "$collection/.env.collection" ]; then
 fi
 [ -n "$config_root" ] || config_root="$HOME/.config/wtc"
 
-[ -d "$config_root" ] || { echo "error: control root not found: $config_root" >&2; exit 1; }
+# An absent control root means "this machine has no local secrets to link",
+# which is a legitimate state. Treating it as an error made every catch-up
+# and every init hook report a failure for work that was correctly a no-op,
+# which is how real failures stop being read.
+if [ ! -d "$config_root" ]; then
+  echo "control root $config_root does not exist — nothing to link."
+  exit 0
+fi
 
 echo "collection:   $collection"
 echo "control root: $config_root"

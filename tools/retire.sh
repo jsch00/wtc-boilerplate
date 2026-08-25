@@ -102,8 +102,10 @@ EOF
 
 # .env.collection.local is the collection-scoped secrets tier — it dies with
 # the collection (credentials scoped to this wtc's work have nowhere to go).
+# AGENTS.md is the collection-root symlink; WTC-SCOPE.md is the seeded copy.
 rm -f "$dest_root/HANDOFF.md" "$dest_root/.env.collection" \
-  "$dest_root/.env.collection.local" "$dest_root/mise.toml" "$dest_root/.DS_Store"
+  "$dest_root/.env.collection.local" "$dest_root/mise.toml" "$dest_root/.DS_Store" \
+  "$dest_root/AGENTS.md" "$dest_root/WTC-SCOPE.md"
 # Generated skill-link dirs (link-skills.sh) — symlinks into harness/skills,
 # nothing of their own. Without this the rmdir below always finds them and
 # reports the collection as "left in place".
