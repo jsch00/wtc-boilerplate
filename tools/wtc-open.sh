@@ -17,7 +17,10 @@ and collection-scoped secrets to resolve.
 
 With no <collection>, opens the collection containing this harness worktree.
 Re-running is safe: an existing workspace with that label is reused, never
-duplicated. The herdr session is started headless if it is not running; you
+duplicated, and every pane that is sitting at a bare prompt gets its command
+back — the agent, browse's nvim, the status table. That is the fix for a
+session restored after a reboot, which comes back with the layout but not the
+processes. The herdr session is started headless if it is not running; you
 attach to it yourself with `herdr --session <name>`.
 
 A workspace holds no state — it is a view onto worktrees that already exist
@@ -25,7 +28,9 @@ A workspace holds no state — it is a view onto worktrees that already exist
 removes it along with the collection.
 
   --all             every collection in the workspace root
-  --list            list the session's workspaces + agent states, then exit
+  --list            report what is open in each workspace, pane by pane, and
+                    exit — nothing is created, started, or focused
+  --dry-run         say what each pane needs; change nothing
   --session <name>  herdr session (default: workspace-root name minus
                     "-harness"; override with $HARNESS_HERDR_SESSION)
   --agent <kind>    agent kind to start (default: claude; see `herdr agent`)
@@ -41,6 +46,8 @@ removes it along with the collection.
                     on claude.ai, named for the collection. Start-time only —
                     a session started without it cannot be attached later
   --no-agent        create the panes but start no agent
+  --no-status       leave the status pane at a shell prompt (it is otherwise
+                    (re)started whenever that pane is idle)
   --no-browse       leave the browse pane at a shell prompt. By default it
                     opens LazyVim on the collection (tools/wtc-browse.sh)
                     when nvim is on PATH, which is what that pane is for — a
@@ -52,8 +59,8 @@ EOF
   exit 1
 }
 
-all=no list=no session="" agent_kind=claude start_agent=yes focus=no
-agent_args="" agent_args_set=no remote_control=yes start_browse=yes
+all=no list=no dry_run=no session="" agent_kind=claude start_agent=yes focus=no
+agent_args="" agent_args_set=no remote_control=yes start_browse=yes start_status=yes
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) all=yes; shift ;;
@@ -62,8 +69,10 @@ while [ $# -gt 0 ]; do
     --agent) agent_kind="${2:?--agent needs a kind}"; shift 2 ;;
     --agent-args) agent_args="${2-}"; agent_args_set=yes; shift 2 ;;
     --no-remote-control) remote_control=no; shift ;;
+    --dry-run) dry_run=yes; shift ;;
     --no-agent) start_agent=no; shift ;;
     --no-browse) start_browse=no; shift ;;
+    --no-status) start_status=no; shift ;;
     --focus) focus=yes; shift ;;
     -h|--help) usage ;;
     -*) echo "unknown option: $1" >&2; usage ;;
@@ -83,19 +92,6 @@ if [ "$agent_args_set" = no ] && [ "$agent_kind" = claude ]; then
   agent_args="--dangerously-skip-permissions"
 fi
 
-if [ "$list" = yes ]; then
-  if ! herdr_session_running "$session"; then
-    echo "herdr session '$session': not running"
-    exit 0
-  fi
-  echo "herdr session '$session':"
-  herdr_ws_pairs "$session" \
-    | awk -F'\t' '{ printf "  %-28s %s\n", $1, $3 }' \
-    | sort
-  echo "attach: herdr --session $session"
-  exit 0
-fi
-
 # Which collections? Explicit args, --all, or the one holding this harness.
 collections=""
 if [ "$all" = yes ]; then
@@ -113,18 +109,119 @@ else
 fi
 [ -n "${collections// /}" ] || { echo "error: no collections found under $ROOT" >&2; exit 1; }
 
+# --- what is already open ---------------------------------------------------
+# A pane can exist and still be an empty prompt — that is exactly what a herdr
+# session restored after a reboot looks like, layout without processes. So the
+# question is never "is there a status pane" but "is anything running in it",
+# and every pane is inspected before anything is started. One `pane list` per
+# workspace plus one process lookup per pane answers it.
+
+# <rows> <label> -> missing | idle | stale <agent> | agent <kind> <status> | running <cmd>
+pane_state() {
+  _pid="$(herdr_row_col "$1" "$2" 2)"
+  [ -n "$_pid" ] || { printf 'missing\n'; return 0; }
+  _kind="$(herdr_row_col "$1" "$2" 3)"
+  _cmd="$(herdr_pane_fg_cmdline "$session" "$_pid")"
+  if herdr_cmdline_is_shell "$_cmd"; then
+    # herdr still names an agent on a pane whose agent has exited. The prompt
+    # is the truth: that pane is empty and wants its agent back.
+    if [ -n "$_kind" ]; then printf 'stale %s\n' "$_kind"; else printf 'idle\n'; fi
+    return 0
+  fi
+  if [ -n "$_kind" ]; then
+    printf 'agent %s %s\n' "$_kind" "$(herdr_row_col "$1" "$2" 4)"
+    return 0
+  fi
+  # A script's foreground process is its interpreter, so name the script:
+  # a status pane reads "wtc-status.sh", not "bash".
+  _show=""
+  # shellcheck disable=SC2086
+  for _w in $_cmd; do
+    case "$_w" in *=*|-*) continue ;; esac
+    _b="${_w##*/}"
+    case "$_b" in env|zsh|bash|fish|sh|nu|dash|ksh|python3|python|node|ruby|perl) continue ;; esac
+    _show="$_b"; break
+  done
+  if [ -z "$_show" ]; then _show="${_cmd%% *}"; _show="${_show##*/}"; fi
+  printf 'running %s\n' "$_show"
+}
+
+state_label() { # <state words…> -> one human phrase
+  case "$1" in
+    missing) printf 'no pane' ;;
+    idle)    printf 'empty' ;;
+    stale)   printf 'empty (%s exited)' "$2" ;;
+    agent)   printf '%s %s' "$2" "${3:-unknown}" ;;
+    running) printf '%s' "$2" ;;
+    *)       printf '%s' "$1" ;;
+  esac
+}
+
+note() { report="${report:+$report, }$*"; }
+
+if [ "$list" = yes ]; then
+  if ! herdr_session_running "$session"; then
+    echo "herdr session '$session': not running"
+    exit 0
+  fi
+  echo "herdr session '$session':"
+  for c in $collections; do
+    if [ ! -d "$ROOT/$c/harness" ]; then
+      printf '  %-34s %-4s not a collection (no harness/)\n' "$c" "-"
+      continue
+    fi
+    ws="$(herdr_ws_id "$session" "$c")"
+    if [ -z "$ws" ]; then
+      printf '  %-34s %-4s no workspace\n' "$c" "-"
+      continue
+    fi
+    rows="$(herdr_pane_rows "$session" "$ws")"
+    line=""
+    for lbl in agent browse shell status; do
+      st="$(pane_state "$rows" "$lbl")"
+      # A shell pane at its prompt is not empty, it is what it should be.
+      [ "$lbl" = shell ] && [ "$st" = idle ] && st=ready
+      # shellcheck disable=SC2086
+      line="$line  $lbl: $(state_label $st)"
+    done
+    printf '  %-34s %-4s%s\n' "$c" "$ws" "$line"
+  done
+  echo "attach: herdr --session $session"
+  exit 0
+fi
+
 herdr_ensure_session "$session"
+
+# The status pane, like browse: beside the shell (under browse), or under the
+# shell on a pre-browse workspace where the right column is already stacked.
+ensure_status_pane() { # <workspace> <cwd> -> pane id
+  _base="$(herdr_pane_id_by_label "$session" "$1" shell)"
+  _dir=right
+  if [ -z "$_base" ]; then
+    _base="$(herdr_pane_id_by_label "$session" "$1" browse)"
+    _dir=down
+  fi
+  [ -n "$_base" ] || return 1
+  _pane="$(herdr --session "$session" pane split "$_base" \
+    --direction "$_dir" --cwd "$2" --no-focus | herdr_first_pane_id)"
+  [ -n "$_pane" ] || return 1
+  herdr --session "$session" pane rename "$_pane" status >/dev/null
+  printf '%s\n' "$_pane"
+}
 
 open_collection() { # <collection>
   name="$1"
   dir="$ROOT/$name"
   [ -d "$dir/harness" ] || { echo "skip: $name is not a collection (no harness/)" >&2; return 0; }
+  report="" settle=0
+  agent_name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-' | cut -c1-32)"
 
   ws_id="$(herdr_ws_id "$session" "$name")"
-  if [ -n "$ws_id" ]; then
-    echo "==> $name: workspace $ws_id already open — reusing"
-    agent_pane="$(herdr_pane_id_by_label "$session" "$ws_id" agent)"
-  else
+  if [ -z "$ws_id" ]; then
+    if [ "$dry_run" = yes ]; then
+      echo "==> $name: no workspace — would create one: agent, browse, shell, status"
+      return 0
+    fi
     # Collection env into both panes, so ports and collection-scoped secrets
     # resolve without mise. Local last so it wins on a conflicting key, same
     # order as mise.toml's _.file list.
@@ -160,101 +257,148 @@ open_collection() { # <collection>
     if [ -n "$shell_pane" ]; then
       herdr --session "$session" pane rename "$shell_pane" shell >/dev/null
     fi
+    settle=2   # a pane created a moment ago has not reached its prompt
+    note "workspace created"
   fi
 
-  # browse / status — added to workspaces opened before they existed.
-  herdr_ensure_browse_pane "$session" "$ws_id" "$dir" >/dev/null || true
+  # browse / status — added to workspaces opened before they existed. Panes
+  # that are already there are untouched.
+  if [ "$dry_run" = no ]; then
+    herdr_ensure_browse_pane "$session" "$ws_id" "$dir" >/dev/null || true
+    if [ "$start_status" = yes ] \
+       && [ -z "$(herdr_pane_id_by_label "$session" "$ws_id" status)" ]; then
+      ensure_status_pane "$ws_id" "$dir" >/dev/null || true
+      settle=2
+    fi
+  fi
 
-  # Open the browse pane on the collection. Re-query by label rather than
-  # trusting the id above: on a crowded tab that helper falls back to the
-  # shell pane, and a shell is not something to replace with a TUI.
-  if [ "$start_browse" = yes ]; then
-    browse_id="$(herdr_pane_id_by_label "$session" "$ws_id" browse)"
-    if [ -n "$browse_id" ] && command -v nvim >/dev/null 2>&1; then
-      case "$(herdr_pane_fg_name "$session" "$browse_id")" in
-        nvim)
-          : ;;   # already browsing this collection
-        ''|zsh|bash|fish|sh|nu)
-          sleep 2   # a fresh pane needs its prompt before it is typed at
-          # `pane run` takes a shell command string, so both halves are quoted:
-          # a collection directory may contain spaces, and anything unquoted
-          # here would be evaluated by that pane's shell.
-          # The target collection's own tools — not this script's. Opening
-          # collection B via collection A's wtc-open used to leave B's status
-          # pane bound to A's harness path; retiring A then made B's table
-          # spam awk errors and measure against the wrong tip.
+  rows="$(herdr_pane_rows "$session" "$ws_id")"
+
+  # --- agent ---------------------------------------------------------------
+  agent_pane="$(herdr_row_col "$rows" agent 2)"
+  st="$(pane_state "$rows" agent)"
+  if [ "$start_agent" = no ]; then
+    note "agent skipped"
+  else
+    case "${st%% *}" in
+      missing) note "agent no pane" ;;
+      # shellcheck disable=SC2086
+      agent)   note "agent live ($(state_label $st))" ;;
+      running) note "agent busy (${st#running }) — left alone" ;;
+      *)
+        if [ "$dry_run" = yes ]; then
+          note "agent empty → would start $agent_kind"
+        elif start_agent_in_pane; then
+          note "agent started ($agent_kind)"
+        else
+          note "agent start failed"
+        fi
+        ;;
+    esac
+  fi
+
+  # --- browse --------------------------------------------------------------
+  # `pane run` takes a shell command string, so both halves are quoted: a
+  # collection directory may contain spaces, and anything unquoted here would
+  # be evaluated by that pane's shell. The target collection's own tools — not
+  # this script's: opening collection B via collection A's wtc-open used to
+  # leave B's panes bound to A's harness path, and retiring A then broke them.
+  st="$(pane_state "$rows" browse)"
+  if [ "$start_browse" = no ]; then
+    note "browse skipped"
+  else
+    case "${st%% *}" in
+      missing) note "browse no pane" ;;
+      running) note "browse live (${st#running })" ;;
+      *)
+        if ! command -v nvim >/dev/null 2>&1; then
+          note "browse empty (no nvim)"
+        elif [ "$dry_run" = yes ]; then
+          note "browse empty → would start nvim"
+        else
           printf -v browse_cmd '%q --here %q' "$dir/harness/tools/wtc-browse.sh" "$name"
-          herdr --session "$session" pane run "$browse_id" \
-            "$browse_cmd" >/dev/null || true
-          ;;
-        *)
-          : ;;   # someone's TUI is in there; leave it alone
-      esac
-    fi
+          if herdr_pane_run_idle "$session" "$(herdr_row_col "$rows" browse 2)" \
+               "$browse_cmd" "$settle"; then
+            note "browse started"
+          else
+            note "browse start failed"
+          fi
+        fi
+        ;;
+    esac
   fi
 
+  # --- shell ---------------------------------------------------------------
+  st="$(pane_state "$rows" shell)"
+  case "${st%% *}" in
+    missing) note "shell no pane" ;;
+    running) note "shell busy (${st#running })" ;;
+    *)       note "shell ready" ;;
+  esac
 
-  if [ -z "$(herdr_pane_id_by_label "$session" "$ws_id" status)" ]; then
-    # Prefer beside the shell (under browse). Fall back to under the shell
-    # on a pre-browse workspace where the right column is already stacked.
-    base="$(herdr_pane_id_by_label "$session" "$ws_id" shell)"
-    split_dir=right
-    if [ -z "$base" ]; then
-      base="$(herdr_pane_id_by_label "$session" "$ws_id" browse)"
-      split_dir=down
-    fi
-    if [ -n "$base" ]; then
-      status_pane="$(herdr --session "$session" pane split "$base" \
-        --direction "$split_dir" --cwd "$dir" --no-focus | herdr_first_pane_id)"
-      herdr --session "$session" pane rename "$status_pane" status >/dev/null
-      sleep 2   # let the shell reach its prompt before it is typed at
-      printf -v status_cmd '%q --repos --watch 120 %q' \
-        "$dir/harness/tools/wtc-status.sh" "$name"
-      herdr --session "$session" pane run "$status_pane" \
-        "$status_cmd" >/dev/null
-    fi
+  # --- status --------------------------------------------------------------
+  st="$(pane_state "$rows" status)"
+  if [ "$start_status" = no ]; then
+    note "status skipped"
+  else
+    case "${st%% *}" in
+      missing) note "status no pane" ;;
+      running) note "status live" ;;
+      *)
+        if [ "$dry_run" = yes ]; then
+          note "status empty → would start wtc-status"
+        else
+          printf -v status_cmd '%q --repos --watch 120 %q' \
+            "$dir/harness/tools/wtc-status.sh" "$name"
+          if herdr_pane_run_idle "$session" "$(herdr_row_col "$rows" status 2)" \
+               "$status_cmd" "$settle"; then
+            note "status started"
+          else
+            note "status start failed"
+          fi
+        fi
+        ;;
+    esac
   fi
 
-  if [ "$start_agent" = yes ] && [ -n "$agent_pane" ] \
-     && ! herdr_pane_has_agent "$session" "$agent_pane"; then
-    # Agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents.
-    agent_name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-' | cut -c1-32)"
-    echo "==> $name: starting $agent_kind as '$agent_name' in $agent_pane"
-    # Remote Control puts this session in the Claude mobile app and claude.ai.
-    # The whole point of a wtc agent is that it keeps working while you are not
-    # at this machine, and a collection you cannot check on from a phone misses
-    # half of that. Claude only accepts it at START time — there is no
-    # in-session toggle — so it is decided here or not at all, and the remote
-    # session is named for the collection so the mobile list reads like the
-    # workspace does. Only applies to the default claude args: --agent-args or
-    # --no-remote-control leave it off.
-    this_agent_args="$agent_args"
-    if [ "$remote_control" = yes ] && [ "$agent_args_set" = no ] && [ "$agent_kind" = claude ]; then
-      this_agent_args="$this_agent_args --remote-control $agent_name"
-    fi
-
-    # A freshly created pane needs a moment before its shell is "available".
-    # Intentional word-splitting: $agent_args is a flag string, not a path.
-    # shellcheck disable=SC2086
-    set -- start "$agent_name" --kind "$agent_kind" --pane "$agent_pane"
-    if [ -n "$this_agent_args" ]; then
-      set -- "$@" -- $this_agent_args
-    fi
-    n=0
-    until err="$(herdr --session "$session" agent "$@" 2>&1 >/dev/null)"; do
-      n=$((n + 1))
-      if [ "$n" -ge 15 ]; then
-        echo "error: $name: could not start $agent_kind in $agent_pane: $err" >&2
-        return 1
-      fi
-      sleep 1
-    done
-  fi
-
-  if [ "$focus" = yes ] && [ -n "$ws_id" ]; then
+  if [ "$focus" = yes ] && [ -n "$ws_id" ] && [ "$dry_run" = no ]; then
     herdr --session "$session" workspace focus "$ws_id" >/dev/null
   fi
-  echo "==> $name: workspace $ws_id ready"
+  echo "==> $name: $ws_id — $report"
+  return 0
+}
+
+# Start the collection's agent in its pane. Remote Control puts this session in
+# the Claude mobile app and claude.ai. The whole point of a wtc agent is that it
+# keeps working while you are not at this machine, and a collection you cannot
+# check on from a phone misses half of that. Claude only accepts it at START
+# time — there is no in-session toggle — so it is decided here or not at all,
+# and the remote session is named for the collection so the mobile list reads
+# like the workspace does. Only applies to the default claude args:
+# --agent-args or --no-remote-control leave it off.
+start_agent_in_pane() {
+  this_agent_args="$agent_args"
+  if [ "$remote_control" = yes ] && [ "$agent_args_set" = no ] && [ "$agent_kind" = claude ]; then
+    this_agent_args="$this_agent_args --remote-control $agent_name"
+  fi
+
+  # Agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents.
+  # Intentional word-splitting: $agent_args is a flag string, not a path.
+  # shellcheck disable=SC2086
+  set -- start "$agent_name" --kind "$agent_kind" --pane "$agent_pane"
+  if [ -n "$this_agent_args" ]; then
+    set -- "$@" -- $this_agent_args
+  fi
+  # A freshly created pane needs a moment before its shell is "available".
+  n=0
+  until err="$(herdr --session "$session" agent "$@" 2>&1 >/dev/null)"; do
+    n=$((n + 1))
+    if [ "$n" -ge 15 ]; then
+      echo "error: $name: could not start $agent_kind in $agent_pane: $err" >&2
+      return 1
+    fi
+    sleep 1
+  done
   return 0
 }
 

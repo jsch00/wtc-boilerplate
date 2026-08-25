@@ -361,6 +361,69 @@ herdr_pane_fg_name() { # <session> <pane> -> foreground process name, or empty
     | head -n1 || true
 }
 
+herdr_pane_fg_cmdline() { # <session> <pane> -> foreground command line, or empty
+  herdr --session "$1" pane process-info --pane "$2" 2>/dev/null \
+    | tr '{}' '\n\n' \
+    | sed -n 's/.*"cmdline":"\([^"]*\)".*/\1/p' \
+    | head -n1 || true
+}
+
+# Is this command line a shell waiting at its prompt? The process NAME is not
+# enough: a shell script's foreground process is also "bash", so a live
+# `bash tools/wtc-status.sh` would read as idle and get a second one typed on
+# top of it. A bare shell is a one-word command line ("-zsh", "bash"); a shell
+# running something has arguments.
+herdr_cmdline_is_shell() { # <cmdline>
+  [ -n "$1" ] || return 0
+  case "$1" in *[[:space:]]*) return 1 ;; esac
+  case "${1#-}" in
+    zsh|bash|fish|sh|nu|dash|ksh) return 0 ;;
+    */zsh|*/bash|*/fish|*/sh|*/nu|*/dash|*/ksh) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+herdr_pane_idle() { # <session> <pane>
+  herdr_cmdline_is_shell "$(herdr_pane_fg_cmdline "$1" "$2")"
+}
+
+# Start <cmd> in a pane that is idle; leave a pane that is already working
+# alone. This is what makes wtc-open re-runnable: a herdr session restored
+# after a reboot comes back with the layout but not the processes, so every
+# pane is a bare prompt and each one's own command has to be put back.
+# <settle> seconds waits for a pane created moments ago to reach its prompt; a
+# pane that has been sitting there since the reboot needs no wait at all.
+herdr_pane_run_idle() { # <session> <pane> <cmd> [settle-seconds]
+  [ -n "$2" ] || return 1
+  herdr_pane_idle "$1" "$2" || return 1
+  [ -z "${4:-}" ] || [ "${4:-0}" = 0 ] || sleep "$4"
+  herdr --session "$1" pane run "$2" "$3" >/dev/null 2>&1 || return 1
+}
+
+# One `pane list` per workspace, as "<label>\t<pane-id>\t<agent>\t<agent-status>".
+# herdr reports the agent on the pane itself, so this answers both halves of
+# "what is already open here" — which labels exist, and which one is an agent —
+# in a single call. Flattening the JSON with tr would not do: a pane carrying
+# an agent has a nested agent_session object, and the fields land in different
+# fragments.
+herdr_pane_rows() { # <session> <workspace>
+  herdr --session "$1" pane list --workspace "$2" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    panes = json.load(sys.stdin)["result"]["panes"]
+except Exception:
+    sys.exit(0)
+for p in panes:
+    print("\t".join([p.get("label") or "", p.get("pane_id") or "",
+                     p.get("agent") or "", p.get("agent_status") or ""]))
+' 2>/dev/null || true
+}
+
+# Column 1 label, 2 pane id, 3 agent kind, 4 agent status.
+herdr_row_col() { # <rows> <label> <column>
+  printf '%s\n' "$1" | awk -F'\t' -v l="$2" -v c="$3" '$1 == l { print $c; exit }'
+}
+
 # Default layout (new workspaces), see instructions/herdr.md:
 #
 #   [ agent | browse        ]
