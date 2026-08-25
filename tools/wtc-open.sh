@@ -221,7 +221,7 @@ open_collection() { # <collection>
   dir="$ROOT/$name"
   [ -d "$dir/harness" ] || { echo "skip: $name is not a collection (no harness/)" >&2; return 0; }
   report="" settle=0
-  agent_name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-' | cut -c1-32)"
+  agent_name="$(herdr_agent_name "$session" "$name")"
 
   ws_id="$(herdr_ws_id "$session" "$name")"
   if [ -z "$ws_id" ]; then
@@ -323,7 +323,12 @@ open_collection() { # <collection>
         elif [ "$dry_run" = yes ]; then
           note "browse empty → would start nvim"
         else
-          printf -v browse_cmd '%q --here %q' "$dir/harness/tools/wtc-browse.sh" "$name"
+          # Relative to the pane's cwd (the collection root), and no
+          # collection argument: wtc-browse defaults to the one it is run
+          # from. What lands in that pane's shell history is then a command
+          # anyone can re-run from any collection, instead of one machine's
+          # absolute paths.
+          browse_cmd='./harness/tools/wtc-browse.sh --here'
           if herdr_pane_run_idle "$session" "$(herdr_row_col "$rows" browse 2)" \
                "$browse_cmd" "$settle"; then
             note "browse started"
@@ -357,7 +362,7 @@ open_collection() { # <collection>
         else
           # --repos is the pane's intent (the process table is its own pane);
           # the interval, click and scope come from wtc-status itself now.
-          printf -v status_cmd '%q --repos' "$dir/harness/tools/wtc-status.sh"
+          status_cmd='./harness/tools/wtc-status.sh --repos'
           if herdr_pane_run_idle "$session" "$(herdr_row_col "$rows" status 2)" \
                "$status_cmd" "$settle"; then
             note "status started"

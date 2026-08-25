@@ -344,6 +344,24 @@ herdr_ws_id() { # <session> <label> -> workspace id, or empty
   herdr_ws_pairs "$1" | awk -F'\t' -v l="$2" '$1 == l { print $2; exit }'
 }
 
+# herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents, and a
+# name follows the pane occupant until that agent exits. Compose them as
+# <session>--<collection> so one string says which session and which wtc — the
+# same name herdr answers to, Claude Remote Control registers, and the phone
+# lists. Past 32 characters the collection half is trimmed rather than the
+# session prefix: the prefix is what keeps names from colliding across
+# sessions on one machine.
+herdr_agent_name() { # <session> <collection>
+  _s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+  _c="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+  _room=$((32 - ${#_s} - 2))
+  if [ "$_room" -lt 1 ]; then
+    printf '%s\n' "$(printf '%s' "$_s" | cut -c1-32)"
+    return 0
+  fi
+  printf '%s--%s\n' "$_s" "$(printf '%s' "$_c" | cut -c1-"$_room")"
+}
+
 herdr_pane_id_by_label() { # <session> <workspace> <pane-label> -> pane id, or empty
   herdr --session "$1" pane list --workspace "$2" 2>/dev/null \
     | tr '{}' '\n\n' \

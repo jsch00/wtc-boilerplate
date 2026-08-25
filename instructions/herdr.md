@@ -144,6 +144,29 @@ dev servers, `docker compose up`, watch-mode runners, log tails, and TUIs
 also findable via `herdr pane list`, so the next agent doesn't start a
 second copy on the same port.
 
+### Write it relative
+
+Every command a tool types into a pane is **relative to the collection root**,
+which is that pane's cwd: `./harness/tools/wtc-status.sh --repos`,
+`./harness/tools/wtc-browse.sh --here`, a bare `lazygit` in a pane opened at
+the worktree. No absolute paths, and no collection argument where the tool
+already defaults to the collection it runs from. A pane's shell history is
+then a set of commands anyone can re-run in any collection, rather than a
+record of one machine's directory layout.
+
+### Agent names
+
+An agent is named **`<session>--<collection>`** — `wtc--billing-api`. herdr
+caps names at 32 characters (`[a-z][a-z0-9_-]{0,31}`, unique among live
+agents); past that the collection half is trimmed and the session prefix
+stays, because the prefix is what keeps two sessions on one machine from
+colliding. One string then reads the same in `herdr agent list`, in Claude's
+Remote Control list, and on the phone.
+
+Commands that address a running agent (`agent prompt`, `agent wait`) take a
+name **or a pane id** — prefer the pane id. A name only exists while the agent
+herdr started is still that pane's occupant.
+
 ## Subagents vs. herdr agents
 
 Subagents are ephemeral workers inside one task — shared context, structured

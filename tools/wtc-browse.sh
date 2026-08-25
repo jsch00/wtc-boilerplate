@@ -93,15 +93,18 @@ if [ "$here" = no ] && herdr_caller_is_agent; then
         nvim)
           echo "==> $name: nvim already in $pane"
           ;;
-        ''|zsh|bash|fish|sh|nu)
-          echo "==> $name: nvim in $pane"
-          herdr --session "$session" pane run "$pane" \
-            "$script_dir/wtc-browse.sh --here $name" >/dev/null
-          ;;
         *)
-          echo "==> $name: $pane is busy ($fg) — not replacing it" >&2
-          echo "    quit that TUI, or run: $script_dir/wtc-browse.sh --here" >&2
-          exit 1
+          if ! herdr_pane_idle "$session" "$pane"; then
+            echo "==> $name: $pane is busy ($fg) — not replacing it" >&2
+            echo "    quit that TUI, or run: ./harness/tools/wtc-browse.sh --here" >&2
+            exit 1
+          fi
+          echo "==> $name: nvim in $pane"
+          # Relative to the pane's cwd (the collection root) and with no
+          # collection argument — the pane's shell history stays free of this
+          # machine's absolute paths.
+          herdr --session "$session" pane run "$pane" \
+            './harness/tools/wtc-browse.sh --here' >/dev/null
           ;;
       esac
       herdr_ensure_pr_tab "$session" "$ws" "$collection" || true
