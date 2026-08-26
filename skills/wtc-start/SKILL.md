@@ -16,7 +16,8 @@ common="$(git rev-parse --git-common-dir 2>/dev/null)"
 case "$common" in */.bare/*.git) echo "in a collection" ;; esac
 ```
 
-Cheaper: a `harness/AGENTS.md` in the current directory or one level up. The
+Cheaper: an `AGENTS.md` beside a `harness/` directory, in the current
+directory or one level up. The
 **collection root** is the directory holding `harness/`. Sibling repos are its
 other subdirectories; the full inventory is `harness/.harness-repos.yml`.
 
@@ -30,10 +31,24 @@ If `HANDOFF.md` exists at the collection root:
 1. Read it.
 2. Turn anything durable into issues, commits, or PR text. Anything that
    matters and is only in that file is currently one `rm` from being lost.
-3. **Delete it.** Not later, not at the end of the session — now.
+3. Transcribe the scope into **`WTC-SCOPE.md`** at the collection root — the
+   task in a paragraph, the issue, one line per repo saying why that repo is
+   here, and what is deliberately out. That file is what the next session in
+   this collection reads instead of the handoff. If the collection predates
+   the file, seed it first:
+
+   ```bash
+   tools/link-skills.sh --seed-scope
+   ```
+
+4. **Delete the handoff.** Not later, not at the end of the session — now.
 
 A `HANDOFF.md` still present hours into a session, or at retire time, is a
 bug. Its absence is normal and means the wtc was already picked up.
+
+Keep the scope file short — it is read in full at the start of every session
+here — and keep it true: widening the scope later is a deliberate edit to it,
+not a silent `add-repo.sh`.
 
 ## 3. Identify the work
 

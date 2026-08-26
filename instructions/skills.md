@@ -36,9 +36,19 @@ So **two directory names cover all three**: `.claude/skills` and
 one symlink per skill:
 
 ```text
-<collection>/.claude/skills/wtc-pr -> ../../harness/skills/wtc-pr
-<collection>/.agents/skills/wtc-pr -> ../../harness/skills/wtc-pr
+<collection>/AGENTS.md              -> harness/collection-AGENTS.md
+<collection>/.claude/skills/wtc-pr  -> ../../harness/skills/wtc-pr
+<collection>/.agents/skills/wtc-pr  -> ../../harness/skills/wtc-pr
 ```
+
+The same tool installs the collection's **entry point**, `AGENTS.md`: the file
+every one of those CLIs reads on its own when it opens the collection, which
+makes it the one place shared guidance lands without a per-tool rule file. It
+is authored as `harness/collection-AGENTS.md`, named for where it goes — a
+file actually called `AGENTS.md` in the harness would be read as instructions
+for whoever is editing that folder. Its companion `WTC-SCOPE.md` says what the
+individual collection is for; see
+[collection-context.md](collection-context.md).
 
 Why the collection root: it is where agents are meant to start (cross-repo
 context lives in the siblings), and it is **not a git repo**, so the link

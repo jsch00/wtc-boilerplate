@@ -5,10 +5,27 @@ root** outside every repo and collection:
 
 ```text
 ~/.config/wtc/                 # $WTC_CONFIG_ROOT (this is the default)
+  wtc.env                            # machine-wide tool defaults (not secrets)
   <repo-name>/<repo-relative-path>   # e.g. api/.env,
                                      #      console/.env.local
   certificates/                      # signing material not owned by any repo
 ```
+
+`wtc.env` is the one place a **changed default** belongs, so that a bare
+`tools/wtc-xyz.sh` keeps doing what this machine wants without flags repeated
+in every command line. It is read by `wtc-open.sh` and `wtc-status.sh` on
+every run; CLI flags still win.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `WTC_AGENT_KIND` | `claude` | agent kind `wtc-open.sh` starts |
+| `WTC_AGENT_ARGS` | — | args passed to the agent, replacing the built-in defaults |
+| `WTC_STATUS_REPOS` | `no` | `yes` → status shows only the collection table |
+| `WTC_STATUS_WATCH` | `60` | redraw interval in seconds; `0` prints once |
+| `WTC_STATUS_NO_CLICK` | `no` | `yes` → no mouse capture, no constant redraw |
+
+It holds defaults, not credentials — but it lives in the control root because
+that is the machine-scoped, never-committed place that already exists.
 
 A **shared control root**, not per-collection copies. Collections multiply
 checkouts, and copies-per-collection means a rotated credential is stale in

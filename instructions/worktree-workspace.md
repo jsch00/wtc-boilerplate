@@ -26,7 +26,10 @@ clones. One layout, no modes. Standing this up in an empty folder:
 | Concept | Meaning |
 |---|---|
 | **Bare owner** | `.bare/<repo>.git` — the single local clone; all worktrees hang off it |
-| **Collection** | Named folder with `harness/` + sibling worktrees for one task or purpose |
+| **Workspace root** | The folder holding every collection plus `.bare/`. Not a git repo |
+| **Collection** (collection root, wtc) | Named folder with `harness/` + its repo siblings, for **one** task or purpose. This is what you open |
+| **Repo siblings** | The repo worktrees inside one collection — the working set |
+| **Collection siblings** | The other collections under the workspace root — other tasks, off-limits unless the user names one ([collection-context.md](collection-context.md)) |
 | **Development tip** | Per-repo `default_ref` in `.harness-repos.yml` (`origin/main` / `origin/develop`) |
 | **Branch-off** | Create a new collection with selected repos (`tools/branch-off.sh`) |
 | **Catch-up** | Fetch/prune bares, fast-forward clean tip worktrees (rules in `AGENTS.md`) |

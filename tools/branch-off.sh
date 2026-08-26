@@ -129,7 +129,7 @@ write_collection_env "$dest_root" "$collection"
 
 # Expose the wtc-* skills under the directory names the agent CLIs read
 # (instructions/skills.md). Before the init hooks: a hook may well want them.
-"$script_dir/link-skills.sh" --collection "$dest_root"
+"$script_dir/link-skills.sh" --collection "$dest_root" --seed-scope
 
 for wt in "$dest_root"/*/; do
   wt="${wt%/}"

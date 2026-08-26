@@ -17,8 +17,10 @@ different revision, with no clone duplication and no branch contention.
   .bare/
     <repo>.git             # bare owners, cloned from the forge
   <collection>/            # one folder per task
+    AGENTS.md              # entry point, linked from harness/collection-AGENTS.md
+    WTC-SCOPE.md           # what THIS collection is for
     harness/               # this repo's worktree — tools + instructions
-    <repo>/                # siblings, one per repo in scope
+    <repo>/                # repo siblings, one per repo in scope
     ext.<repo>/            # unmanaged sibling, owner lives elsewhere
 ```
 

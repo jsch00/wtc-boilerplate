@@ -250,6 +250,34 @@ port_var_for() { # <repo-name> -> env var name, e.g. console -> CONSOLE_PORT
 # when herdr is not installed.
 # ---------------------------------------------------------------------------
 
+# The collection this harness worktree lives in. Every wtc tool defaults to
+# it — a bare `tools/wtc-xyz.sh` acts here, and only an explicit --all or a
+# named collection widens that (instructions/collection-context.md).
+this_collection_dir() {
+  (cd "$HARNESS_DIR/.." && pwd)
+}
+
+this_collection() {
+  basename "$(this_collection_dir)"
+}
+
+# Machine-wide tool defaults, in the control root next to the secrets:
+# $WTC_CONFIG_ROOT/wtc.env. The one place a changed default belongs, so a bare
+# `tools/wtc-xyz.sh` keeps doing what this machine wants without flags in every
+# command line. CLI flags still win. See instructions/secrets.md.
+load_wtc_config() {
+  : "${WTC_CONFIG_ROOT:=$HOME/.config/wtc}"
+  if [ -f "$WTC_CONFIG_ROOT/wtc.env" ]; then
+    # shellcheck disable=SC1091
+    . "$WTC_CONFIG_ROOT/wtc.env"
+  fi
+  : "${WTC_AGENT_KIND:=claude}"
+  : "${WTC_AGENT_ARGS:=}"
+  : "${WTC_STATUS_REPOS:=no}"
+  : "${WTC_STATUS_WATCH:=60}"
+  : "${WTC_STATUS_NO_CLICK:=no}"
+}
+
 herdr_present() { command -v herdr >/dev/null 2>&1; }
 
 herdr_session_name() { # workspace-root basename minus a trailing "-harness"
@@ -316,6 +344,24 @@ herdr_ws_id() { # <session> <label> -> workspace id, or empty
   herdr_ws_pairs "$1" | awk -F'\t' -v l="$2" '$1 == l { print $2; exit }'
 }
 
+# herdr agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents, and a
+# name follows the pane occupant until that agent exits. Compose them as
+# <session>--<collection> so one string says which session and which wtc — the
+# same name herdr answers to, Claude Remote Control registers, and the phone
+# lists. Past 32 characters the collection half is trimmed rather than the
+# session prefix: the prefix is what keeps names from colliding across
+# sessions on one machine.
+herdr_agent_name() { # <session> <collection>
+  _s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+  _c="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+  _room=$((32 - ${#_s} - 2))
+  if [ "$_room" -lt 1 ]; then
+    printf '%s\n' "$(printf '%s' "$_s" | cut -c1-32)"
+    return 0
+  fi
+  printf '%s--%s\n' "$_s" "$(printf '%s' "$_c" | cut -c1-"$_room")"
+}
+
 herdr_pane_id_by_label() { # <session> <workspace> <pane-label> -> pane id, or empty
   herdr --session "$1" pane list --workspace "$2" 2>/dev/null \
     | tr '{}' '\n\n' \
@@ -359,6 +405,69 @@ herdr_pane_fg_name() { # <session> <pane> -> foreground process name, or empty
     | tr '{}' '\n\n' \
     | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' \
     | head -n1 || true
+}
+
+herdr_pane_fg_cmdline() { # <session> <pane> -> foreground command line, or empty
+  herdr --session "$1" pane process-info --pane "$2" 2>/dev/null \
+    | tr '{}' '\n\n' \
+    | sed -n 's/.*"cmdline":"\([^"]*\)".*/\1/p' \
+    | head -n1 || true
+}
+
+# Is this command line a shell waiting at its prompt? The process NAME is not
+# enough: a shell script's foreground process is also "bash", so a live
+# `bash tools/wtc-status.sh` would read as idle and get a second one typed on
+# top of it. A bare shell is a one-word command line ("-zsh", "bash"); a shell
+# running something has arguments.
+herdr_cmdline_is_shell() { # <cmdline>
+  [ -n "$1" ] || return 0
+  case "$1" in *[[:space:]]*) return 1 ;; esac
+  case "${1#-}" in
+    zsh|bash|fish|sh|nu|dash|ksh) return 0 ;;
+    */zsh|*/bash|*/fish|*/sh|*/nu|*/dash|*/ksh) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+herdr_pane_idle() { # <session> <pane>
+  herdr_cmdline_is_shell "$(herdr_pane_fg_cmdline "$1" "$2")"
+}
+
+# Start <cmd> in a pane that is idle; leave a pane that is already working
+# alone. This is what makes wtc-open re-runnable: a herdr session restored
+# after a reboot comes back with the layout but not the processes, so every
+# pane is a bare prompt and each one's own command has to be put back.
+# <settle> seconds waits for a pane created moments ago to reach its prompt; a
+# pane that has been sitting there since the reboot needs no wait at all.
+herdr_pane_run_idle() { # <session> <pane> <cmd> [settle-seconds]
+  [ -n "$2" ] || return 1
+  herdr_pane_idle "$1" "$2" || return 1
+  [ -z "${4:-}" ] || [ "${4:-0}" = 0 ] || sleep "$4"
+  herdr --session "$1" pane run "$2" "$3" >/dev/null 2>&1 || return 1
+}
+
+# One `pane list` per workspace, as "<label>\t<pane-id>\t<agent>\t<agent-status>".
+# herdr reports the agent on the pane itself, so this answers both halves of
+# "what is already open here" — which labels exist, and which one is an agent —
+# in a single call. Flattening the JSON with tr would not do: a pane carrying
+# an agent has a nested agent_session object, and the fields land in different
+# fragments.
+herdr_pane_rows() { # <session> <workspace>
+  herdr --session "$1" pane list --workspace "$2" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    panes = json.load(sys.stdin)["result"]["panes"]
+except Exception:
+    sys.exit(0)
+for p in panes:
+    print("\t".join([p.get("label") or "", p.get("pane_id") or "",
+                     p.get("agent") or "", p.get("agent_status") or ""]))
+' 2>/dev/null || true
+}
+
+# Column 1 label, 2 pane id, 3 agent kind, 4 agent status.
+herdr_row_col() { # <rows> <label> <column>
+  printf '%s\n' "$1" | awk -F'\t' -v l="$2" -v c="$3" '$1 == l { print $c; exit }'
 }
 
 # Default layout (new workspaces), see instructions/herdr.md:

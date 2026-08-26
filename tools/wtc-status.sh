@@ -4,7 +4,8 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: tools/wtc-status.sh [--repos|--procs] [--watch [seconds]] [--no-click] [<collection>]
+Usage: tools/wtc-status.sh [--repos|--procs] [--watch [seconds]] [--no-click]
+                          [--all | <collection>]
 
 Prints per-collection branch / open PR + check rollup / working-tree state,
 then the processes running under the herdr session (CPU, memory). Meant to
@@ -13,15 +14,23 @@ be left running in a pane — wtc-open.sh puts one in every wtc:
   tools/wtc-status.sh --repos --watch 120 <collection>
   tools/wtc-status.sh --procs --watch 5
 
-  <collection>  limit the table to one collection (default: all)
+  <collection>  another collection under the workspace root
+  --all         every collection (default is this one)
   --repos       only the collection table (default: both)
   --procs       only the process table
-  --watch       redraw every N seconds (default 60)
+  --watch       redraw every N seconds
+  --no-watch    print once and exit
   --click       clickable rows even when stdin/stdout is not a terminal
   --no-click    plain table, no mouse capture
   --no-fetch    do not refresh remote refs first (offline, or a hot loop)
   --fetch-age   seconds a bare's last fetch may be before it is refreshed
                 (default 300)
+
+Scope is this collection unless --all or a name says otherwise, and defaults
+for the flags above come from $WTC_CONFIG_ROOT/wtc.env (WTC_STATUS_REPOS /
+_WATCH / _NO_CLICK) — so the bare command is already the one this machine
+wants. Redirected output prints one pass: a watch loop nobody can quit is not
+a status report.
 
 BRANCH shows `⌂ <branch>` for a worktree detached at the development tip —
 the resting state, and up to date unless a column says otherwise. ↑ and ↓ are
@@ -51,12 +60,33 @@ EOF
   exit 1
 }
 
-want=both watch=no interval=60 click=auto fetch=yes fetch_max_age=300
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+HARNESS_DIR="$(dirname "$script_dir")"
+. "$script_dir/lib.sh"
+harness_lib_init
+# Machine defaults first, flags on top: a changed default lives in the control
+# root, not in every command line (instructions/secrets.md).
+load_wtc_config
+
+want=both
+case "${WTC_STATUS_REPOS:-no}" in yes|1|true|TRUE) want=repos ;; esac
+interval="${WTC_STATUS_WATCH:-60}"
+case "$interval" in ''|*[!0-9]*) interval=60 ;; esac
+# Watching needs a terminal that can be redrawn and quit. Piped or captured,
+# one pass is the only useful answer — see the note in usage.
+watch=no
+if [ "$interval" != 0 ] && [ -t 1 ]; then watch=yes; fi
+click=auto
+case "${WTC_STATUS_NO_CLICK:-no}" in yes|1|true|TRUE) click=no ;; esac
+fetch=yes fetch_max_age=300 all=no only=""
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --repos) want=repos; shift ;;
     --procs) want=procs; shift ;;
+    --all) all=yes; shift ;;
     --watch) watch=yes; shift; case "${1:-}" in [0-9]*) interval="$1"; shift ;; esac ;;
+    --no-watch) watch=no; [ "$click" = yes ] || click=no; shift ;;
     --click) click=yes; shift ;;
     --no-click) click=no; shift ;;
     --no-fetch) fetch=no; shift ;;
@@ -66,12 +96,16 @@ while [ $# -gt 0 ]; do
     *) only="$1"; shift ;;
   esac
 done
-only="${only:-}"
 
-script_dir="$(cd "$(dirname "$0")" && pwd)"
-HARNESS_DIR="$(dirname "$script_dir")"
-. "$script_dir/lib.sh"
-harness_lib_init
+# Collection-local by default; widening the view is always something you typed
+# (instructions/collection-context.md).
+if [ "$all" = yes ]; then
+  [ -z "$only" ] || { echo "error: --all and a collection name are exclusive" >&2; exit 1; }
+else
+  [ -n "$only" ] || only="$(this_collection)"
+  [ -d "$ROOT/$only/harness" ] \
+    || { echo "error: $ROOT/$only is not a collection (no harness/)" >&2; exit 1; }
+fi
 
 # Scoped runs take the *target* collection's registry, not whichever harness
 # worktree this script happened to be launched from. Opening collection B via
