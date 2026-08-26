@@ -127,6 +127,12 @@ if [ "$click" = auto ]; then
 fi
 [ "$click" = yes ] && watch=yes   # a clickable table is a live one
 
+# Redirected output is a report, not a live table — even `--watch` on a pipe
+# would hang an agent capturing the table. Usage promises one pass.
+if [ ! -t 1 ]; then
+  watch=no
+fi
+
 # Column widths are character counts, and the rollup glyphs (✓ ✗ ● — ↑ ±) are
 # one column but several bytes — so the table needs a UTF-8 ctype to measure.
 case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in

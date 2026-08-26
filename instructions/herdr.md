@@ -29,15 +29,37 @@ wants to open neovim sends it there and keeps talking in `agent`. A command
 typed at a prompt — herdr shell or a plain terminal — runs in that window;
 it does not bounce into `browse`.
 
-Re-running `wtc-open.sh` heals a standard 3-pane workspace (agent / shell /
-status) by adding `browse` to the right of the agent. A workspace that
-already grew extra panes (a second agent, a one-off split) is left alone,
-and browse tools fall back to `shell` rather than inserting another column.
+## Reaching a collection's agent from your phone
+
+`wtc-open.sh` starts claude with **Remote Control** by default, so every
+collection's agent shows up in the Claude mobile app and on claude.ai under
+`<session>--<collection>`. A wtc agent is meant to keep working while you are
+elsewhere; one you can only reach by walking back to this machine gives up
+half of that.
+
+The catch worth knowing before you need it: **Claude only accepts
+`--remote-control` at start time.** There is no in-session toggle, so an agent
+already running without it cannot be attached to your phone — it has to be
+restarted, resuming its conversation:
+
+```bash
+cd <collection>
+claude --remote-control <session>--<collection> --dangerously-skip-permissions --continue
+```
+
+`--no-remote-control` opts out for one open; passing `--agent-args` replaces the
+default arguments entirely and so drops it too.
+
+Re-running `wtc-open.sh` inspects every pane and only (re)starts what is
+sitting at a bare prompt — that is how a session restored after a reboot gets
+its commands back. A workspace that already grew extra panes (a second agent,
+a one-off split) is left alone, and browse tools fall back to `shell` rather
+than inserting another column.
 
 A session is a separate server with its own workspace list, so other work on
 the machine never shows up here. The name defaults to the workspace-root
-folder minus `-harness` (`<project>-harness/` → `<project>`); override with `--session`
-or `$HARNESS_HERDR_SESSION`.
+folder minus a trailing `-wtc` or `-harness` — so `<project>-wtc/` → session
+**`<project>`**; override with `--session` or `$HARNESS_HERDR_SESSION`.
 
 ```bash
 tools/wtc-open.sh [<collection> …]    # this collection, or the named ones
@@ -160,8 +182,10 @@ An agent is named **`<session>--<collection>`** — `wtc--billing-api`. herdr
 caps names at 32 characters (`[a-z][a-z0-9_-]{0,31}`, unique among live
 agents); past that the collection half is trimmed and the session prefix
 stays, because the prefix is what keeps two sessions on one machine from
-colliding. One string then reads the same in `herdr agent list`, in Claude's
-Remote Control list, and on the phone.
+colliding. A collection named for a GitHub issue (`239-timeline-…`) is fine:
+the session half starts with a letter, and if the session itself does not it
+gets a `w` prefix. One string then reads the same in `herdr agent list`, in
+Claude's Remote Control list, and on the phone.
 
 Commands that address a running agent (`agent prompt`, `agent wait`) take a
 name **or a pane id** — prefer the pane id. A name only exists while the agent

@@ -47,15 +47,15 @@ harness_lib_init
 
 [ -n "$collection" ] || collection="$(this_collection)"
 
-# The old signature put the collection first. Say so plainly instead of
-# looking for a registry repo named after a collection folder.
-for repo in "$@"; do
-  if [ -d "$ROOT/$repo/harness" ]; then
-    echo "error: '$repo' is a collection, not a repo. add-repo acts on this" >&2
-    echo "       collection; pass --collection $repo to target that one." >&2
-    exit 1
-  fi
-done
+# The old signature put the collection first (`add-repo.sh <collection> <repo>`).
+# If the first of several positionals is a collection directory, they meant
+# that form. A *repo* that happens to share a name with some other collection
+# is still a valid repo argument — only the old two-arg shape is rejected.
+if [ $# -ge 2 ] && [ -d "$ROOT/$1/harness" ]; then
+  echo "error: '$1' is a collection, not a repo. add-repo acts on this" >&2
+  echo "       collection; pass --collection $1 to target that one." >&2
+  exit 1
+fi
 
 dest_root="$ROOT/$collection"
 [ -d "$dest_root/harness" ] || { echo "error: $dest_root is not a collection (no harness/)" >&2; exit 1; }

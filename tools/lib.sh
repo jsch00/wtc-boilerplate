@@ -280,13 +280,18 @@ load_wtc_config() {
 
 herdr_present() { command -v herdr >/dev/null 2>&1; }
 
-herdr_session_name() { # workspace-root basename minus a trailing "-harness"
+# The session is named for the PROJECT, not for the folder that happens to
+# hold it: the workspace-root basename minus a trailing "-wtc" or "-harness".
+# Both suffixes say "this is the workspace for X" — the session wants to be
+# called X, since that is what the human is switching between.
+herdr_session_name() {
   if [ -n "${HARNESS_HERDR_SESSION:-}" ]; then
     printf '%s\n' "$HARNESS_HERDR_SESSION"
     return
   fi
   name="$(basename "$ROOT")"
-  printf '%s\n' "${name%-harness}"
+  name="${name%-harness}"
+  printf '%s\n' "${name%-wtc}"
 }
 
 herdr_session_running() { # <session> — read-only probe; nonzero if no server
@@ -354,6 +359,12 @@ herdr_ws_id() { # <session> <label> -> workspace id, or empty
 herdr_agent_name() { # <session> <collection>
   _s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
   _c="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+  # herdr requires ^[a-z][a-z0-9_-]{0,31}$. A workspace or collection named
+  # for a GitHub issue (`239-timeline-…`) would otherwise fail to start an
+  # agent. Prefixing the session half is enough: <session>--<collection>
+  # already starts with a letter when the session does, and this covers the
+  # leftover case where the session itself does not.
+  case "$_s" in [a-z]*) ;; *) _s="w$_s" ;; esac
   _room=$((32 - ${#_s} - 2))
   if [ "$_room" -lt 1 ]; then
     printf '%s\n' "$(printf '%s' "$_s" | cut -c1-32)"
@@ -453,6 +464,10 @@ herdr_pane_run_idle() { # <session> <pane> <cmd> [settle-seconds]
 # an agent has a nested agent_session object, and the fields land in different
 # fragments.
 herdr_pane_rows() { # <session> <workspace>
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "error: python3 is required to inspect herdr panes (wtc-open --list / idle restart)" >&2
+    return 1
+  fi
   herdr --session "$1" pane list --workspace "$2" 2>/dev/null | python3 -c '
 import json, sys
 try:
@@ -462,7 +477,7 @@ except Exception:
 for p in panes:
     print("\t".join([p.get("label") or "", p.get("pane_id") or "",
                      p.get("agent") or "", p.get("agent_status") or ""]))
-' 2>/dev/null || true
+'
 }
 
 # Column 1 label, 2 pane id, 3 agent kind, 4 agent status.
@@ -617,7 +632,16 @@ write_collection_env() { # <collection-dir> <collection-name>
   # file keeps rotation sane). Listed in mise.toml unconditionally, so it must
   # exist even when empty. umask 077 + unconditional chmod so a secrets tier
   # is never briefly (or lastingly) world-readable.
-  if [ ! -f "$dir/.env.collection.local" ]; then
+  # The symlink guard comes BEFORE the write, not after it. A *dangling* link
+  # here is invisible to `-f` (which follows it to a target that is not there),
+  # so seeding would happily follow the link and create the secrets file
+  # wherever it points — outside the collection, at whatever mode. Guarding
+  # afterwards catches the chmod and misses the escape entirely.
+  if [ -L "$dir/.env.collection.local" ]; then
+    echo "error: $dir/.env.collection.local is a symlink; refusing to seed or chmod through it" >&2
+    return 1
+  fi
+  if [ ! -e "$dir/.env.collection.local" ]; then
     (
       umask 077
       cat > "$dir/.env.collection.local" <<'EOF'
@@ -633,12 +657,6 @@ write_collection_env() { # <collection-dir> <collection-name>
 # Inherited by every repo in this collection, not just one.
 EOF
     )
-  fi
-  # Refuse to chmod through a symlink — that would change the mode of
-  # whatever it points at (possibly outside the collection).
-  if [ -L "$dir/.env.collection.local" ]; then
-    echo "error: $dir/.env.collection.local is a symlink; refuse to chmod through it" >&2
-    return 1
   fi
   chmod 600 "$dir/.env.collection.local"
 

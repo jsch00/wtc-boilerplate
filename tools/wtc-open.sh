@@ -31,8 +31,9 @@ removes it along with the collection.
   --list            report what is open in each workspace, pane by pane, and
                     exit — nothing is created, started, or focused
   --dry-run         say what each pane needs; change nothing
-  --session <name>  herdr session (default: workspace-root name minus
-                    "-harness"; override with $HARNESS_HERDR_SESSION)
+  --session <name>  herdr session (default: workspace-root name minus a
+                    trailing "-wtc" or "-harness"; override with
+                    $HARNESS_HERDR_SESSION)
   --agent <kind>    agent kind to start (default: claude; see `herdr agent`)
   --agent-args "…"  args passed to the agent, replacing the default
                     (claude: --dangerously-skip-permissions; a wtc is an
