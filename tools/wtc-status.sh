@@ -97,6 +97,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# One numeric truth for the interval, before anything decides on it. `--watch`
+# accepts anything starting with a digit and wtc.env accepts whatever is in it,
+# so `00`, `007` and `0abc` all reach here — and `sleep` returns immediately for
+# the first two and fails for the third, both inside a `while :` loop. 10# keeps
+# a leading zero from being read as octal.
+case "$interval" in
+  ''|*[!0-9]*)
+    echo "error: --watch / WTC_STATUS_WATCH wants a whole number of seconds: $interval" >&2
+    exit 1 ;;
+esac
+interval=$((10#$interval))
+
 # Collection-local by default; widening the view is always something you typed
 # (instructions/collection-context.md).
 if [ "$all" = yes ]; then
