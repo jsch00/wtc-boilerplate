@@ -86,7 +86,7 @@ while [ $# -gt 0 ]; do
     --procs) want=procs; shift ;;
     --all) all=yes; shift ;;
     --watch) watch=yes; shift; case "${1:-}" in [0-9]*) interval="$1"; shift ;; esac ;;
-    --no-watch) watch=no; [ "$click" = yes ] || click=no; shift ;;
+    --no-watch) watch=no; interval=0; shift ;;
     --click) click=yes; shift ;;
     --no-click) click=no; shift ;;
     --no-fetch) fetch=no; shift ;;
@@ -126,6 +126,14 @@ if [ "$click" = auto ]; then
   if [ "$want" != procs ] && [ -t 0 ] && [ -t 1 ]; then click=yes; fi
 fi
 [ "$click" = yes ] && watch=yes   # a clickable table is a live one
+
+# ...but an interval of 0 means "print once" — that is what --no-watch sets,
+# what WTC_STATUS_WATCH=0 means, and what `--watch 0` asks for. It wins over
+# anything that merely turned watching *on*, including the click rule above:
+# the loop below is `render; sleep "$interval"`, so a zero interval is a busy
+# loop re-fetching every bare as fast as the machine allows, and a table
+# nobody redraws is not one worth capturing mouse reports for.
+if [ "$interval" = 0 ]; then watch=no click=no; fi
 
 # Redirected output is a report, not a live table — even `--watch` on a pipe
 # would hang an agent capturing the table. Usage promises one pass.
