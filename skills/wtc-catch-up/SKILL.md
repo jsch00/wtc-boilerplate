@@ -191,6 +191,25 @@ reports `(none)`, the harness worktree is behind rather than the tool being
 broken. To roll a newly landed skill out across every collection at once —
 each of which must be caught up first — `harness/tools/link-skills.sh --all`.
 
+## 4.1 Re-render the MCP servers
+
+```bash
+harness/tools/link-mcp.sh
+```
+
+Same lifecycle and the same ordering rule as the skills above: it renders
+**this collection's** `harness/.mcp-servers.yml` into `.mcp.json`,
+`.cursor/mcp.json` and `.codex/config.toml` at the collection root, so a
+server added to the registry since reaches this collection, and one removed
+or disabled since stops being offered. `--all` rolls a registry change across
+every (already caught-up) collection.
+
+It prints `note: unset in this shell: …` when a rendered server names a
+credential the environment does not supply. That is information, not a
+failure — the config is correct and the credential is missing. Fix it where
+the variable belongs (`instructions/secrets.md`), not by editing the rendered
+file, which is overwritten on the next run.
+
 ## 4.5 Refresh the collection env
 
 ```bash

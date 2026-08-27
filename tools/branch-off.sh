@@ -131,6 +131,10 @@ write_collection_env "$dest_root" "$collection"
 # (instructions/skills.md). Before the init hooks: a hook may well want them.
 "$script_dir/link-skills.sh" --collection "$dest_root" --seed-scope
 
+# Same idea for MCP servers (instructions/mcp.md): rendered before the init
+# hooks so a hook that starts an agent finds them already configured.
+"$script_dir/link-mcp.sh" --collection "$dest_root"
+
 for wt in "$dest_root"/*/; do
   wt="${wt%/}"
   [ -e "$wt/.git" ] && run_hook "$wt" init

@@ -105,11 +105,12 @@ EOF
 # AGENTS.md is the collection-root symlink; WTC-SCOPE.md is the seeded copy.
 rm -f "$dest_root/HANDOFF.md" "$dest_root/.env.collection" \
   "$dest_root/.env.collection.local" "$dest_root/mise.toml" "$dest_root/.DS_Store" \
-  "$dest_root/AGENTS.md" "$dest_root/WTC-SCOPE.md"
-# Generated skill-link dirs (link-skills.sh) — symlinks into harness/skills,
-# nothing of their own. Without this the rmdir below always finds them and
-# reports the collection as "left in place".
-rm -rf "$dest_root/.claude" "$dest_root/.agents"
+  "$dest_root/AGENTS.md" "$dest_root/WTC-SCOPE.md" "$dest_root/.mcp.json"
+# Generated agent-config dirs — skill symlinks into harness/skills
+# (link-skills.sh) and the rendered MCP configs (link-mcp.sh). Nothing of their
+# own. Without this the rmdir below always finds them and reports the
+# collection as "left in place".
+rm -rf "$dest_root/.claude" "$dest_root/.agents" "$dest_root/.cursor" "$dest_root/.codex"
 if rmdir "$dest_root" 2>/dev/null; then
   echo "done: retired $dest_root"
 else
