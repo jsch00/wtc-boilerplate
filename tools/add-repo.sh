@@ -72,6 +72,10 @@ done
 # created, for a wtc that predates them (instructions/skills.md).
 "$script_dir/link-skills.sh" --collection "$dest_root"
 
+# Likewise for MCP servers — a collection that predates the registry picks
+# them up on the next add-repo (instructions/mcp.md).
+"$script_dir/link-mcp.sh" --collection "$dest_root"
+
 for repo in "$@"; do
   case "$repo" in "$(harness_repo)"|harness) continue ;; esac
   run_hook "$dest_root/$repo" init

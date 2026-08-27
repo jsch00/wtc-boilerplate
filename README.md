@@ -56,6 +56,8 @@ different revision, with no clone duplication and no branch contention.
 - **`instructions/skills.md`**, **`instructions/herdr.md`**,
   **`instructions/collection-context.md`** — how agents are told the rules,
   and how a collection gets a session.
+- **`instructions/mcp.md`** — the MCP registry, why credentials are named
+  and never valued there, and what is deliberately *not* an MCP server.
 - **`instructions/jira.md`** — a worked example of wiring one external
   tracker; ignore it if yours is not Atlassian.
 - **`skills/`** — the agent-facing procedures (`wtc-new`, `wtc-catch-up`,

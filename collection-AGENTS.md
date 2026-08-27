@@ -58,6 +58,10 @@ explicitly. Full rule: `harness/instructions/collection-context.md`.
   and `/wtc-start` on a fresh one. They are authored in `harness/skills/` and
   exposed at this root by `link-skills.sh`. Prefer one over ad hoc shell when
   it exists.
+- **MCP servers** are declared once in `harness/.mcp-servers.yml` and
+  rendered into `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` at
+  this root by `link-mcp.sh`. The rendered files name credentials and never
+  hold one; the values come from the collection env.
 - **Config** is `.env.collection` (generated: ports, `$WTC_CONFIG_ROOT`) plus
   `.env.collection.local` (yours, never regenerated, dies with the
   collection). herdr panes and mise load both, so a tool run from a pane

@@ -13,6 +13,9 @@ harness_lib_init() {
   [ -d "$ROOT/.bare" ] || { echo "error: no .bare/ found above $HARNESS_DIR" >&2; exit 1; }
   REGISTRY="$HARNESS_DIR/.harness-repos.yml"
   LOCAL_REPOS="$HARNESS_DIR/.harness-repos"
+  # Deliberately not fatal when absent, unlike REGISTRY: a harness worktree on
+  # a branch that predates .mcp-servers.yml must still run every other tool.
+  MCP_REGISTRY="${MCP_REGISTRY:-$HARNESS_DIR/.mcp-servers.yml}"
   [ -f "$REGISTRY" ] || { echo "error: $REGISTRY missing" >&2; exit 1; }
 }
 
@@ -36,6 +39,55 @@ registry_field() { # <repo-name> <field> — one scalar field from the repo's bl
 registry_all_names() {
   [ -f "$REGISTRY" ] || return 0
   awk '$1 == "-" && $2 == "name:" { print $3 }' "$REGISTRY"
+}
+
+# --- MCP registry (.mcp-servers.yml) ------------------------------------
+# Same block-scanner shape as the repo registry above, with one difference:
+# these fields hold lists (`args`, `env`, `agents`), so the value is the whole
+# rest of the line rather than $2. Callers split on whitespace.
+
+mcp_registry_file() {
+  printf '%s\n' "${MCP_REGISTRY:-$HARNESS_DIR/.mcp-servers.yml}"
+}
+
+# Locals are _mcp_-prefixed throughout: lib.sh is sourced, has no `local`
+# discipline (bash 3.2), and callers already own short names — wtc-status.sh
+# keeps its mode flag in `want` and a cache path in `f`.
+
+mcp_all_names() {
+  _mcp_f="$(mcp_registry_file)"
+  [ -f "$_mcp_f" ] || return 0
+  awk '$1 == "-" && $2 == "name:" { print $3 }' "$_mcp_f"
+}
+
+mcp_field() { # <server-name> <field> — rest of the line after "<field>:"
+  _mcp_f="$(mcp_registry_file)"
+  [ -f "$_mcp_f" ] || return 0
+  awk -v srv="$1" -v field="$2:" '
+    $1 == "-" && $2 == "name:" { cur = $3 }
+    cur == srv && $1 == field {
+      # Strip leading blanks and the field token itself; what remains is the
+      # value, spaces and all. sub() on $0 so a list field survives intact.
+      sub(/^[[:blank:]]*[^[:blank:]]+[[:blank:]]*/, "")
+      print
+      exit
+    }
+  ' "$_mcp_f"
+}
+
+# Does this server render for <agent>? Absent `agents:` means all of them.
+mcp_wants_agent() { # <server-name> <agent>
+  _mcp_want="$(mcp_field "$1" agents)"
+  [ -n "$_mcp_want" ] || return 0
+  for _mcp_a in $_mcp_want; do [ "$_mcp_a" = "$2" ] && return 0; done
+  return 1
+}
+
+mcp_enabled() { # <server-name>
+  case "$(mcp_field "$1" enabled)" in
+    no|false|No|False) return 1;;
+    *) return 0;;
+  esac
 }
 
 bare_for() { # <repo-name> -> bare path (local file first, then convention)

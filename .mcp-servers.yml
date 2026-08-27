@@ -1,0 +1,55 @@
+# Tracked MCP registry — WHAT servers exist (development view).
+#
+# Rendered into each collection's per-agent config by tools/link-mcp.sh:
+#
+#   <collection>/.mcp.json           (Claude Code, project scope)
+#   <collection>/.cursor/mcp.json    (Cursor)
+#   <collection>/.codex/config.toml  (Codex, trusted projects only)
+#
+# Same split the repo registry uses: this file is tracked and says what
+# exists; the rendered files are machine-local and disposable. They live at
+# the collection root, which is not a git repo — so no repo needs an ignore
+# rule for them (same reasoning as tools/link-skills.sh).
+#
+# CREDENTIALS ARE NAMED HERE, NEVER VALUED. `env:` lists variable *names*;
+# the renderer emits "${NAME}" for Claude/Cursor and env_vars = [...] for
+# Codex, and the values arrive from the collection env at launch — generated
+# non-secrets in .env.collection, secrets in .env.collection.local or the
+# control root (instructions/secrets.md). Putting a token in this file would
+# commit it.
+#
+# Fields:
+#   name       server key as the agent sees it
+#   transport  stdio | http
+#   command    stdio only — executable
+#   args       stdio only — whitespace-separated, rendered as a JSON/TOML array
+#   url        http only
+#   env        variable NAMES this server needs (whitespace-separated)
+#   token_env  http only — variable NAME holding the bearer token
+#   agents     which CLIs get it: any of claude codex cursor (default: all)
+#   enabled    no = registered but not rendered (default: yes)
+#   role       one line, for humans reading this file
+#
+# Values must contain no " or \ — the renderer quotes them into JSON and TOML
+# and has no jq to escape with, so link-mcp.sh refuses the whole file rather
+# than emit a config no agent can parse. Need a quoted argument? Put it in a
+# wrapper script and point `command` at that.
+#
+# See instructions/mcp.md for why a server belongs here rather than in a
+# machine-global agent config, and for what is deliberately NOT an MCP server.
+
+schema_version: 1
+
+# Empty on purpose, and that is a working state — link-mcp.sh renders empty
+# configs from it, which is how a removed server gets pruned from collections.
+#
+# Atlassian is deliberately NOT here. It was, briefly, as a community
+# mcp-atlassian entry needing a JIRA_API_TOKEN in .env.collection.local. The
+# Teamwork Graph CLI (`twg`) replaced it: first-party, browser OAuth so no
+# plaintext token anywhere, and it ships both a CLI and agent skills — which
+# is the arrangement "What is deliberately not an MCP server" in
+# instructions/mcp.md argues for. Adding a second Atlassian path would have
+# meant two credentials for one system.
+#
+# Add servers here when a system has no CLI a human and a script can both run.
+servers:
