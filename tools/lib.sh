@@ -69,6 +69,14 @@ mcp_field() { # <server-name> <field> — rest of the line after "<field>:"
       # Strip leading blanks and the field token itself; what remains is the
       # value, spaces and all. sub() on $0 so a list field survives intact.
       sub(/^[[:blank:]]*[^[:blank:]]+[[:blank:]]*/, "")
+      # Then a trailing inline comment, which YAML would not consider part of
+      # the value either. Only when preceded by blanks, so a value containing
+      # a bare # survives. Without this, `enabled: no  # for now` reads as
+      # "no  # for now" and the server renders anyway — and the schema example
+      # in instructions/mcp.md is written with inline comments, so this is the
+      # documented way to write the file, not an edge case.
+      sub(/[[:blank:]]+#.*$/, "")
+      sub(/[[:blank:]]+$/, "")
       print
       exit
     }

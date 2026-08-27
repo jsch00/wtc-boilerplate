@@ -152,18 +152,36 @@ validate_registry() {
           ;;
       esac
     done
+    # env/token_env name shell variables, and the unset-check below expands
+    # them indirectly. A token that is not a valid identifier is a registry
+    # mistake rather than something to work around — and refusing it here is
+    # what keeps that expansion from being handed something shaped like code.
+    for v in $(mcp_field "$s" env) $(mcp_field "$s" token_env); do
+      case "$v" in
+        [A-Za-z_][A-Za-z0-9_]*) ;;
+        *) echo "error: $s names a variable that is not an identifier: $v" >&2; bad=1;;
+      esac
+    done
   done
   [ "$bad" -eq 0 ] || {
-    echo "error: refusing to render — the value(s) above would produce JSON and" >&2
-    echo "       TOML that no agent can parse. Registry values must be quote-" >&2
-    echo "       free; there is no jq here to escape them. A server that truly" >&2
-    echo "       needs a quoted argument wants a wrapper script in the command" >&2
-    echo "       instead (instructions/mcp.md)." >&2
+    echo "error: refusing to render — see the value(s) above (instructions/mcp.md)." >&2
+    echo "       A quote or backslash would produce JSON and TOML that no agent" >&2
+    echo "       can parse; there is no jq here to escape them, so a server that" >&2
+    echo "       truly needs a quoted argument wants a wrapper script as its" >&2
+    echo "       command. A variable name that is not an identifier cannot be" >&2
+    echo "       looked up at all, and is a typo in the registry." >&2
     exit 1
   }
 }
 
 validate_registry
+
+# Registry values are split on whitespace in a dozen places below (args, env,
+# agents). Word-splitting is wanted; pathname expansion is not — an arg like
+# `--include=*.py` would otherwise expand against whatever is in the cwd and
+# render whatever it found. The --all sweep above is the only glob this script
+# needs, and it has already run and exited by here.
+set -f
 
 # --- rendering helpers --------------------------------------------------
 
@@ -234,7 +252,11 @@ render_toml() { # Codex — [mcp_servers.<name>] blocks
   echo "# have marked trusted; an untrusted project ignores it silently."
   for s in $(servers_for codex); do
     echo
-    printf '[mcp_servers.%s]\n' "$s"
+    # Quoted key: a name with a dot in it would otherwise be a *nested*
+    # table (`[mcp_servers.a.b]`), silently configuring a server nobody
+    # named. Quoting is safe because validation has already refused any
+    # name containing a quote or backslash.
+    printf '[mcp_servers."%s"]\n' "$s"
     case "$(mcp_field "$s" transport)" in
       http)
         printf 'url = "%s"\n' "$(mcp_field "$s" url)"
@@ -296,8 +318,11 @@ missing=""
 for s in $(mcp_all_names); do
   mcp_enabled "$s" || continue
   for v in $(mcp_field "$s" env) $(mcp_field "$s" token_env); do
-    eval "val=\${$v:-}"
-    [ -n "$val" ] || case " $missing " in *" $v "*) ;; *) missing="$missing $v";; esac
+    # Indirect expansion, not eval: the name comes from a tracked file, but
+    # "tracked" is not "safe to execute" — a typo shaped like a command
+    # substitution would run. validate_registry has already established that
+    # this is an identifier.
+    [ -n "${!v:-}" ] || case " $missing " in *" $v "*) ;; *) missing="$missing $v";; esac
   done
 done
 if [ -n "$missing" ]; then
