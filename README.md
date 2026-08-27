@@ -40,6 +40,27 @@ different revision, with no clone duplication and no branch contention.
   worktree like any other, so the agent's rules are versioned with the code
   they govern.
 
+## Reading order
+
+- **`bootstrap.md`** — stand the whole thing up in an empty folder, from the
+  first bare clone to the first collection. Start here.
+- **`instructions/worktree-workspace.md`** — the geometry above, in full: bare
+  owners, unmanaged `ext.` siblings, the registry.
+- **`instructions/development-workflows.md`** — detached tips, when a branch
+  gets created, how an issue ID reaches a branch name.
+- **`instructions/hooks-and-env.md`** — the per-repo lifecycle hooks and the
+  collection env (ports, `WTC_CONFIG_ROOT`).
+- **`instructions/secrets.md`** — the control root, the collection-scoped
+  tier, and how to stop `gh`/`twg`/`jira` sharing one machine-global identity
+  across unrelated projects.
+- **`instructions/skills.md`**, **`instructions/herdr.md`**,
+  **`instructions/collection-context.md`** — how agents are told the rules,
+  and how a collection gets a session.
+- **`instructions/jira.md`** — a worked example of wiring one external
+  tracker; ignore it if yours is not Atlassian.
+- **`skills/`** — the agent-facing procedures (`wtc-new`, `wtc-catch-up`,
+  `wtc-pr`, …), each one a skill file an agent loads on demand.
+
 ## What this repository is
 
 A **reference implementation of the concept**, not a library. There is
