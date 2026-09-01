@@ -95,8 +95,9 @@ first — or at minimum returning to the tip before starting.
 ## 5. Load the collection env
 
 `.env.collection` at the collection root carries `WTC_COLLECTION`,
-`COLLECTION_PORT_BASE`, `WTC_CONFIG_ROOT`, and a `<REPO>_PORT` per serving
-repo. A mise-activated shell already has them; otherwise:
+`WTC_AGENT_NAME`, `COLLECTION_PORT_BASE`, `WTC_CONFIG_ROOT`, and a
+`<REPO>_PORT` per serving repo. A mise-activated shell already has them;
+otherwise:
 
 ```bash
 set -a; . <collection>/.env.collection; set +a

@@ -61,14 +61,15 @@ version of the same "run it again" tool, and catch-up runs it too.
 `42000 + 100·n` across existing collections — and writes two generated,
 uncommitted files at the collection root:
 
-- `.env.collection` — `WTC_COLLECTION`, `WTC_CONFIG_ROOT`,
-  `COLLECTION_PORT_BASE`, and one `<REPO>_PORT` per registry repo with a
-  `port_offset` (e.g. `api` offset 1 → `API_PORT=42001`). Ports are emitted
-  for *all* such repos, present or not, so a frontend can always resolve the
-  API port — point absent services at a shared dev instance or start them on
-  demand. It also carries the optional tool-identity variables
-  (`GH_CONFIG_DIR` and friends) when the workspace has opted into them —
-  `secrets.md` → Tool identity.
+- `.env.collection` — `WTC_COLLECTION`, `WTC_AGENT_NAME`
+  (`<herdr-session>--<collection>`, what `wtc-open` passes to
+  `herdr agent start`), `WTC_CONFIG_ROOT`, `COLLECTION_PORT_BASE`, and one
+  `<REPO>_PORT` per registry repo with a `port_offset` (e.g. `api` offset 1 →
+  `API_PORT=42001`). Ports are emitted for *all* such repos, present or not,
+  so a frontend can always resolve the API port — point absent services at a
+  shared dev instance or start them on demand. It also carries the optional
+  tool-identity variables (`GH_CONFIG_DIR` and friends) when the workspace has
+  opted into them — `secrets.md` → Tool identity.
 - `mise.toml` — loads `.env.collection` via `[env] _.file`. mise treats the
   collection root as a parent config, so **every sibling repo worktree
   inherits these variables automatically** in any mise-activated shell or
