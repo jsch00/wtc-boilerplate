@@ -12,7 +12,7 @@ Usage:
 Opens each collection as one workspace in the workspace root's herdr session:
 a single tab at the collection root, default panes agent / browse / shell /
 status, all carrying the collection env (.env.collection, then
-.env.collection.local) and the sibling toolchain PATH (.env.toolchain) —
+.env.collection.local) and the sibling toolchain prefix (.env.toolchain) —
 so no mise or shell activation is needed for ports, collection-scoped
 secrets, or repo-pinned tools to resolve.
 
@@ -234,8 +234,6 @@ open_collection() { # <collection>
     # Collection env into the workspace, so ports, collection-scoped secrets,
     # and sibling toolchain bins resolve without mise activate. Local last so
     # it wins on a conflicting key, same order as mise.toml's _.file list.
-    # PATH is prepended with WTC_TOOLCHAIN_PATH so `/usr/bin/env ruby` in an
-    # agent shell cannot fall through to macOS system Ruby.
     set -- create --cwd "$dir" --label "$name" --no-focus
     for envf in "$dir/.env.collection" "$dir/.env.collection.local"; do
       [ -f "$envf" ] || continue
@@ -252,7 +250,21 @@ open_collection() { # <collection>
       _tp="$(sed -n 's/^WTC_TOOLCHAIN_PATH=//p' "$dir/.env.toolchain" | head -n1)"
     fi
     if [ -n "$_tp" ]; then
-      set -- "$@" --env "PATH=$_tp${PATH:+:$PATH}"
+      # Pass the prefix, not a PATH. herdr sets these before the pane's shell
+      # runs, and on macOS /etc/zprofile's path_helper then rebuilds PATH with
+      # the system paths first — an injected prefix lands *below* /usr/bin, so
+      # `ruby` resolves to system 2.6 and the injection silently achieves the
+      # opposite of its purpose. Verified: prefix passed at position 1 comes
+      # out at position 18, /usr/bin at 6.
+      #
+      # WTC_TOOLCHAIN_PATH is an ordinary variable, so path_helper leaves it
+      # alone, and the surfaces that apply it all run *after* the profile:
+      # BASH_ENV for the non-interactive shells agent CLIs spawn, the
+      # PreToolUse hook for their tool calls, `.envrc` for direnv/Grok.
+      set -- "$@" --env "WTC_TOOLCHAIN_PATH=$_tp"
+      if [ -x "$dir/harness/tools/agent-env.sh" ]; then
+        set -- "$@" --env "BASH_ENV=$dir/harness/tools/agent-env.sh"
+      fi
     fi
 
     ws_out="$(herdr --session "$session" workspace "$@")"

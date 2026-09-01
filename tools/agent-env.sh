@@ -18,7 +18,12 @@
 #   harness/tools/agent-env.sh --wrap        # PreToolUse stdin → updatedInput
 #   harness/tools/agent-env.sh --write --collection <dir>
 #
-# Sourced (BASH_ENV, `. agent-env.sh`): apply silently, no stdout.
+# Sourced (BASH_ENV, `. agent-env.sh`): apply to the calling shell silently, no
+# stdout, and never `exit` — see _finish. This is the surface that works in a
+# herdr pane: env passed to the pane process is set *before* the login shell
+# runs, and on macOS /etc/zprofile's path_helper then demotes any injected PATH
+# prefix below /usr/bin. Applying after the profile is the only ordering that
+# wins.
 # Always exit 0: a missing mise is not a reason to fail a hook or a command.
 #
 # Bash 3.2-safe (macOS default): no mapfile, no associative arrays.
@@ -31,6 +36,16 @@ if [ -n "${BASH_VERSION:-}" ] && [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURC
   is_sourced=yes
 fi
 
+# Sourced (BASH_ENV, `. agent-env.sh`), `exit` takes the *calling* shell down
+# with it — a spectacular way for a PATH helper to fail, and silent: the shell
+# just stops. Every exit path goes through here instead.
+_finish() {
+  if [ "$is_sourced" = yes ]; then
+    return "${1:-0}"
+  fi
+  exit "${1:-0}"
+}
+
 mode="eval"
 collection_arg=""
 while [ $# -gt 0 ]; do
@@ -41,8 +56,9 @@ while [ $# -gt 0 ]; do
     --eval) mode=eval; shift ;;
     --collection) collection_arg="${2:?--collection needs a directory}"; shift 2 ;;
     -h|--help)
-      sed -n '2,22p' "$this"
-      exit 0
+      sed -n '2,24p' "$this"
+      _finish 0
+      return 0 2>/dev/null || exit 0
       ;;
     *) break ;;
   esac
@@ -81,7 +97,8 @@ if [ -z "$collection" ]; then
 fi
 if [ -z "$collection" ]; then
   [ "$mode" = wrap ] && cat >/dev/null
-  exit 0
+  _finish 0
+  return 0 2>/dev/null || exit 0
 fi
 
 cache="$collection/.env.toolchain"
@@ -281,4 +298,4 @@ case "$mode" in
   *) emit_eval ;;
 esac
 
-exit 0
+_finish 0
