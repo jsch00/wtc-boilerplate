@@ -140,6 +140,13 @@ for wt in "$dest_root"/*/; do
   [ -e "$wt/.git" ] && run_hook "$wt" init
 done
 
+# Init hooks install the pinned tools; refresh the PATH cache so a just-created
+# collection's agent shells see them without a later catch-up. Pass
+# --collection: this script lives in the *creating* harness, not dest_root's.
+if [ -x "$script_dir/agent-env.sh" ]; then
+  "$script_dir/agent-env.sh" --write --collection "$dest_root" >/dev/null 2>&1 || true
+fi
+
 if [ -n "$pr" ]; then
   branch_note="The primary sibling is already on the PR head branch \`$intended_branch\` — push review work there. Do not \`git switch -c\` a new branch on top of it. Other siblings start detached at the tip."
 else

@@ -81,4 +81,9 @@ for repo in "$@"; do
   run_hook "$dest_root/$repo" init
 done
 
+# New sibling may pin tools the collection cache did not know about.
+if [ -x "$script_dir/agent-env.sh" ]; then
+  "$script_dir/agent-env.sh" --write --collection "$dest_root" >/dev/null 2>&1 || true
+fi
+
 echo "done: added $* to $dest_root"

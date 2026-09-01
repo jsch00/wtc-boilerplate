@@ -48,8 +48,9 @@ different revision, with no clone duplication and no branch contention.
   owners, unmanaged `ext.` siblings, the registry.
 - **`instructions/development-workflows.md`** — detached tips, when a branch
   gets created, how an issue ID reaches a branch name.
-- **`instructions/hooks-and-env.md`** — the per-repo lifecycle hooks and the
-  collection env (ports, `WTC_CONFIG_ROOT`).
+- **`instructions/hooks-and-env.md`** — the per-repo lifecycle hooks, the
+  collection env (ports, `WTC_CONFIG_ROOT`), and how agent shells get
+  sibling toolchains on PATH without `mise activate`.
 - **`instructions/secrets.md`** — the control root, the collection-scoped
   tier, and how to stop `gh`/`twg`/`jira` sharing one machine-global identity
   across unrelated projects.

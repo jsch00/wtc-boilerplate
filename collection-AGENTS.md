@@ -66,6 +66,13 @@ explicitly. Full rule: `harness/instructions/collection-context.md`.
   `.env.collection.local` (yours, never regenerated, dies with the
   collection). herdr panes and mise load both, so a tool run from a pane
   already has them.
+- **Toolchain PATH** is injected for agent shells that never ran `mise
+  activate`. Do not spend turns on `mise trust`, `mise exec`, or prepending
+  `mise where ruby` — a SessionStart/PreToolUse hook, `.envrc`, and herdr
+  workspace env all prepend sibling bins so `/usr/bin/env ruby` cannot fall
+  through to macOS system Ruby. If `ruby -v` still shows 2.6, once:
+  `eval "$(harness/tools/agent-env.sh)"`. Grok project hooks need `/hooks-trust`
+  the first time you open a collection.
 - **Secrets** are never in git and never committed. One canonical copy lives
   in the control root at `$WTC_CONFIG_ROOT/<repo>/<repo-relative-path>` and is
   **symlinked** into the worktrees by `harness/tools/link-secrets.sh`, so a

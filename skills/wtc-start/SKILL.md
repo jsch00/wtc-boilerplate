@@ -106,6 +106,12 @@ Ports are emitted for every registry repo with an offset, present or not — so
 a frontend can always resolve the API port even when that sibling isn't
 checked out here. Point absent services at a shared dev instance.
 
+Do **not** diagnose `mise trust` / `mise exec` / `mise where ruby` as a first
+step. Agent shells get sibling toolchain bins on PATH from `.env.toolchain`
+(via a PreToolUse hook, `.envrc`, and herdr). If `ruby -v` is macOS 2.6,
+`eval "$(harness/tools/agent-env.sh)"` once and continue — full rule in
+`harness/instructions/hooks-and-env.md` → Agent shells and PATH.
+
 ## 6. Report, then work
 
 State in one short paragraph: collection, issue (and tracker key if any), branch

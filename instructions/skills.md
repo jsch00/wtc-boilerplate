@@ -39,7 +39,14 @@ one symlink per skill:
 <collection>/AGENTS.md              -> harness/collection-AGENTS.md
 <collection>/.claude/skills/wtc-pr  -> ../../harness/skills/wtc-pr
 <collection>/.agents/skills/wtc-pr  -> ../../harness/skills/wtc-pr
+<collection>/.grok/hooks/wtc-agent-env.json -> ../../harness/hooks/agent-env.json
+<collection>/.claude/settings.json  -> ../harness/hooks/agent-env.json
+<collection>/.cursor/hooks.json     -> ../harness/hooks/agent-env.json
 ```
+
+The hook JSON prepends sibling toolchain bins on PATH for agent shells that
+never activated mise (`instructions/hooks-and-env.md` → Agent shells and PATH).
+`.envrc` and `.env.toolchain` at the collection root are generated, not linked.
 
 The same tool installs the collection's **entry point**, `AGENTS.md`: the file
 every one of those CLIs reads on its own when it opens the collection, which

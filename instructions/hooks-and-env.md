@@ -84,6 +84,33 @@ source it in the shell/IDE run configuration.
 Port offsets live in `.harness-repos.yml` (`port_offset:`); keep them unique
 and stable — they are the contract between repos.
 
+## Agent shells and PATH
+
+Agent CLIs spawn non-login shells. They do not run `mise activate`, so
+`/usr/bin/env ruby` on a shebang (`bin/rails`, `bin/rake`) falls through to
+macOS system Ruby 2.6, and `mise exec` from the **collection root** uses the
+global pin rather than a sibling's. That is not an untrusted `mise.toml` and
+not a reason to prepend `mise where ruby` by hand.
+
+The harness injects the union of each sibling's `mise bin-paths` so every
+agent shell command sees repo-pinned tools on PATH, independent of cwd:
+
+| Surface | What it does |
+|---|---|
+| `tools/agent-env.sh` | trusts sibling `mise.toml` files, caches bins as `.env.toolchain`, prints `export PATH=…` |
+| `hooks/agent-env.json` | SessionStart refreshes the cache; PreToolUse wraps `Bash` / `run_terminal_command` with `eval "$(agent-env.sh)"` |
+| collection-root `.envrc` | Grok `load_envrc` (and direnv) prepend PATH without needing project hook trust |
+| `wtc-open.sh` | new herdr workspaces get `PATH=$WTC_TOOLCHAIN_PATH:$PATH` at create time |
+
+`link-skills.sh` installs the hook JSON at `.grok/hooks/`, `.claude/settings.json`,
+and `.cursor/hooks.json` (symlinks; a real file there is left as a local
+override) and regenerates `.envrc` / `.env.toolchain`. Catch-up re-runs it.
+Grok skips project hooks until `/hooks-trust`; `.envrc` and herdr PATH still
+apply.
+
+`mise exec` remains correct **inside a sibling**. It is not required to dodge
+system interpreters once PATH is injected.
+
 ## Optional mise extras (never required)
 
 - Repos may pin toolchains in their `mise.toml` (`[tools]` — node, python,
