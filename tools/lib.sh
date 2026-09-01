@@ -259,7 +259,15 @@ hook_warn() { # <worktree-path> <hook> <status> — no-op on success
 
 repo_slug_for() { # <repo-name> -> GitHub owner/repo derived from the registry remote
   remote="$(registry_field "$1" remote)"
-  printf '%s\n' "${remote#*:}" | sed 's/\.git$//'
+  [ -n "$remote" ] || return 0
+  # Both remote forms have to work. Stripping to the first ":" answers for
+  # SSH (git@github.com:owner/repo.git) and turns an HTTPS remote into
+  # "//github.com/owner/repo", which gh cannot resolve — so every PR cell in
+  # wtc-status renders a GraphQL NOT_FOUND blob. Same host-anchored strip
+  # slug_for_worktree already uses just below.
+  case "$remote" in *github.com[:/]*) ;; *) return 0 ;; esac
+  slug="${remote#*github.com}"; slug="${slug#:}"; slug="${slug#/}"
+  printf '%s\n' "${slug%.git}"
 }
 
 slug_for_worktree() { # <worktree> [repo-name] -> owner/repo
