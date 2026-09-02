@@ -700,7 +700,7 @@ write_collection_env() { # <collection-dir> <collection-name>
     echo "# it is checked out here, so absent repos still resolve to a port."
     echo "WTC_COLLECTION=$name"
     # Same string wtc-open passes to `herdr agent start` / Claude --remote-control.
-    echo "WTC_AGENT_NAME=$(herdr_agent_name "$(herdr_session_name)" "$name")"
+    printf 'WTC_AGENT_NAME=%s\n' "$(herdr_agent_name "$(herdr_session_name)" "$name")"
     echo "WTC_CONFIG_ROOT=$cfg_root"
     echo "COLLECTION_PORT_BASE=$base"
     for repo in $(registry_all_names); do
