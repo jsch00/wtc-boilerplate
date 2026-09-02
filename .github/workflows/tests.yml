@@ -45,6 +45,16 @@ jobs:
           command -v timeout >/dev/null && echo "timeout: yes" || echo "timeout: no (status watch cases skip)"
           command -v python3 >/dev/null && echo "python3: yes" || echo "python3: no (--wrap tests take the fail-open branch)"
 
+      - name: Install coreutils (macOS)
+        if: runner.os == 'macOS'
+        # For `gtimeout`. Without it status_args_test skips its zero-interval
+        # cases — the ones that catch a status pane re-fetching every bare as
+        # fast as the machine allows — and it skips them on the platform the
+        # tools actually target, which is the worst place to lose that
+        # coverage. The skip is deliberate so the suite still runs on a bare
+        # machine; CI has no excuse to take it.
+        run: brew install coreutils
+
       - name: Configure git identity
         # The fixtures make real commits. A runner has no global identity, and
         # `commit` fails without one. helpers.sh passes -c on its own commits,

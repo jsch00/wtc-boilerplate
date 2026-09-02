@@ -61,6 +61,13 @@ bash decides it was started by a remote shell daemon and sources `~/.bashrc`
 no-op. The tests redirect individually as well; this is the belt to those
 braces.
 
+The macOS leg installs coreutils for `gtimeout`. Without it,
+`status_args_test.sh` skips its zero-interval cases — the ones that catch a
+status pane re-fetching every bare as fast as the machine allows — and it
+skips them on the platform the tools actually target. The skip exists so the
+suite still runs on a bare machine; CI has no excuse to take it. A green run
+that reports fewer assertions than the other platform is worth reading twice.
+
 A shellcheck job runs advisory-only (`continue-on-error`). Promote it to
 gating once its existing findings are dealt with — a check that is red on
 arrival teaches people to ignore it.
