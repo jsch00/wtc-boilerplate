@@ -58,7 +58,7 @@ removes it along with the collection.
                     pane is left alone either way
   --focus           focus the last opened workspace (default: no focus)
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 all=no list=no dry_run=no session="" agent_kind="" agent_kind_set=no start_agent=yes focus=no
@@ -76,7 +76,7 @@ while [ $# -gt 0 ]; do
     --no-browse) start_browse=no; shift ;;
     --no-status) start_status=no; shift ;;
     --focus) focus=yes; shift ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) break ;;
   esac

@@ -119,39 +119,34 @@ gh pr create --base <working-branch> --fill --title "<issue-id>: <what changed>"
   reviewer should look at hardest. Link the issue and the tracker ticket. If this
   is one of several PRs for one wtc, link the siblings.
 
-### 5.1 Label it with the collection
+### 5.1 Enlist it
 
 ```bash
-gh pr create ... --label "wtc:$WTC_COLLECTION"
+gh pr view --json number --jq .number   # the number gh just created
+tools/wtc-pr.sh enlist <repo> <n> --branch <working-branch>
 ```
 
-The label is how `wtc-status` finds this PR later — it is what lets a
-collection list the work it has in flight after the worktree has already gone
-back to the tip, and it needs no local file to go stale. Create it first if the
-repo does not have it yet:
+This is how `wtc-catch-up` and `wtc-status` find this PR later — a local
+mapping in `<collection>/.wtc-prs`, not a forge label.
+It survives everything a label would, for the one thing that actually matters
+here: this collection's own tools reading it back. `tools/wtc-pr.sh list`
+shows what is currently enlisted; `unlist` drops a row that merged, closed, or
+was enlisted by mistake — `wtc-catch-up` does the `unlist` itself once a
+merged branch is returned to the tip, so this is rarely a manual step.
+
+A `wtc:<collection>` **label is optional now**, not how anything finds the PR.
+Add one only if a repo's own conventions want it (a team dashboard filtering
+on labels, say):
 
 ```bash
 gh label create "wtc:$WTC_COLLECTION" --color ededed \
   --description "Opened from the $WTC_COLLECTION worktree collection" 2>/dev/null || true
+gh pr edit <n> --add-label "wtc:$WTC_COLLECTION"
 ```
 
-`$WTC_COLLECTION` comes from `.env.collection`.
-
-**On a repo you cannot label** — a PR sent to a sibling's upstream, where the
-branch lives on your fork and `gh pr edit --add-label` answers `not found` —
-put the same string in the body instead, as an HTML comment on its own line:
-
-```markdown
-<!-- wtc:$WTC_COLLECTION -->
-```
-
-`wtc-status` reads it exactly as it reads the label, so a PR you sent upstream
-is listed by the collection that sent it rather than by every collection that
-happens to share that upstream. A comment and not a visible line: the reader
-is a maintainer of someone else's repo, to whom our bookkeeping is noise.
-
-If both fail, **open the PR anyway** and say so. A PR that is missing from one
-status table is a smaller problem than a PR that was never opened.
+If enlisting fails for some reason, **open the PR anyway** and say so. A PR
+missing from local bookkeeping is a smaller problem than a PR that was never
+opened — `tools/wtc-pr.sh enlist` afterwards fixes it.
 
 ### 5.2 Ready for review
 
