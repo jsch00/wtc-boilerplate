@@ -34,17 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Record the environment
-        # When a run goes red on one leg of the matrix and not the other, this
-        # is the first thing worth reading.
-        run: |
-          echo "bash:  $(bash --version | head -1)"
-          echo "/bin/bash: $(/bin/bash --version | head -1)"
-          echo "git:   $(git --version)"
-          echo "uname: $(uname -a)"
-          command -v timeout >/dev/null && echo "timeout: yes" || echo "timeout: no (status watch cases skip)"
-          command -v python3 >/dev/null && echo "python3: yes" || echo "python3: no (--wrap tests take the fail-open branch)"
-
       - name: Install coreutils (macOS)
         if: runner.os == 'macOS'
         # For `gtimeout`. Without it status_args_test skips its zero-interval
@@ -63,6 +52,25 @@ jobs:
           git config --global user.name  "wtc-test"
           git config --global user.email "wtc-test@example.invalid"
           git config --global init.defaultBranch main
+
+      - name: Record the environment
+        # When a run goes red on one leg and not the other, this is the first
+        # thing worth reading — so it runs *after* the installs above, or it
+        # reports the machine as it arrived rather than as the suite found it.
+        # An environment line that is wrong is worse than none.
+        run: |
+          echo "bash:      $(bash --version | head -1)"
+          echo "/bin/bash: $(/bin/bash --version | head -1)"
+          echo "git:       $(git --version)"
+          echo "uname:     $(uname -a)"
+          if command -v timeout >/dev/null || command -v gtimeout >/dev/null; then
+            echo "timeout:   yes"
+          else
+            echo "timeout:   no — status watch cases will SKIP, and the totals below will not match the other leg"
+          fi
+          command -v python3 >/dev/null \
+            && echo "python3:   yes" \
+            || echo "python3:   no — --wrap tests take the fail-open branch"
 
       - name: Run the suite
         # stdin closed on purpose. When stdin is a socket, bash decides it was
