@@ -26,7 +26,7 @@ Where it opens depends on who launched it:
 Status-pane clicks talk to this nvim over a listen socket
 (/tmp/wtc-browse-<collection>.nvim).
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 here=no session=""
@@ -35,7 +35,7 @@ while [ $# -gt 0 ]; do
     --here) here=yes; shift ;;
     --session) session="${2:?--session needs a name}"; shift 2 ;;
     --no-focus) shift ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) break ;;
   esac

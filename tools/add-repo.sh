@@ -24,7 +24,7 @@ context (reading a sibling's code) then never grows a branch at all.
                 is created from the repo's default_ref
   --tip         accepted and ignored — detached at the tip is now the default
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 branch="" collection=""
@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
     -b) branch="${2:?-b needs a value}"; shift 2 ;;
     --collection) collection="${2:?--collection needs a name}"; shift 2 ;;
     --tip) echo "note: --tip is the default now (detached at the tip); ignoring" >&2; shift ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) break ;;
   esac
