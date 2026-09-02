@@ -6,9 +6,10 @@ CLI:
   wtc-pr-facts.py is-archived <iso>     # exit 0 if 48 weekday-hours past merge
   wtc-pr-facts.py weekday-hours <iso>   # print elapsed weekday hours (float)
 
-GitHub-only fork: this workspace talks to GitHub (gh) and nothing else, unlike
-Steep's harness which also carries Bitbucket. Bitbucket support was dropped
-rather than stubbed — there is nothing here that would ever call it.
+GitHub-only: this implementation talks to GitHub (gh) and nothing else. A
+second forge was dropped rather than stubbed — there is nothing here that
+would ever call it. The seam is `forge_for_repo` / `pr_url_for` in lib.sh,
+which is where one would attach.
 
 Enrich TSV (same shape as wtc_pr_enrich):
   number \\t state \\t checks \\t merge \\t review \\t title \\t merge_commit \\t merged_on

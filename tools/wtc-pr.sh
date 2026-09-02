@@ -21,7 +21,7 @@ belong here.
 
 Default collection: the one holding this harness worktree.
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -84,6 +84,6 @@ EOF
     [ -n "$repo" ] && [ -n "$num" ] || usage
     wtc_pr_unlist "$coll" "$repo" "$num"
     ;;
-  -h|--help|help) usage ;;
+  -h|--help|help) usage 0 ;;
   *) echo "unknown command: $cmd" >&2; usage ;;
 esac

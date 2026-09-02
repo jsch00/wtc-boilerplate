@@ -291,10 +291,10 @@ slug_for_worktree() { # <worktree> [repo-name] -> owner/repo
   printf '%s\n' "${slug%.git}"
 }
 
-# github | unknown — this workspace is GitHub-only (gh), unlike Steep's harness
-# which also carries Bitbucket. Kept as its own function anyway so callers
-# read the same either way, and a bitbucket case is one line to add if this
-# fork ever needs it.
+# github | unknown — this implementation talks to GitHub (gh) and nothing else.
+# Kept as its own function anyway so every caller reads the same either way,
+# and so a second forge is one case to add here rather than a grep across the
+# tools. `pr_url_for` below already carries the bitbucket branch.
 forge_for_repo() { # <repo-name> -> github | unknown, from the registry remote
   case "$(registry_field "$1" remote)" in
     *github.com*) printf 'github\n' ;;
@@ -302,7 +302,7 @@ forge_for_repo() { # <repo-name> -> github | unknown, from the registry remote
   esac
 }
 
-forge_for_slug() { # <owner/repo> -> github (the only forge this fork talks to)
+forge_for_slug() { # <owner/repo> -> github (the only forge implemented here)
   printf 'github\n'
 }
 
