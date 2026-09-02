@@ -37,17 +37,21 @@ the resting state, and up to date unless a column says otherwise. ↑ and ↓ ar
 commits ahead of and behind the remote, blank when zero; any ↓ means a
 catch-up will bring in remote changes. TREE carries ±changed files.
 
-Scoped to one collection, a PRS section lists the open pull requests that
-collection opened — found by the `wtc:<collection>` label its PR skills apply,
-so they are still listed after the worktree has gone back to the tip. A
-worktree still sitting on a branch whose PR has already merged or closed is
-called out there too, since an open-PRs view would otherwise hide it.
+Scoped to one collection, a PRS section lists the pull requests enlisted for
+it in <collection>/.wtc-prs (`tools/wtc-pr.sh enlist` — see the wtc-pr skill),
+not a forge label search, so it costs no extra round trips beyond enriching
+what is already listed. Open and draft PRs show live; a MERGED one fades
+rather than disappearing, until it passes 48 weekday-hours since merge, at
+which point it collapses behind the `a` (archived) toggle. A worktree still
+sitting on a branch whose PR has already merged or closed is called out in
+amber, since an open-PRs view would otherwise hide it.
 
 On a terminal the collection table is clickable: REPO focuses that sibling
 in the browse nvim, TREE opens its git status there (lazygit if nvim is not
 up), the PR number opens the pull request on github.com, and ▣ opens it in
 Octo in the browse pane. Each target does one thing and reports when it
-cannot, rather than quietly doing the other. r redraws, q quits.
+cannot, rather than quietly doing the other. r redraws, a toggles archived
+PRs, q quits.
 
 `?` toggles a key and icon reference; the footer otherwise stays one line.
 
@@ -57,7 +61,7 @@ which is what lets you select and copy out of it. (Most terminals also have a
 modifier that bypasses mouse reporting for one drag — Option in iTerm2, Shift
 in many others — if you would rather not leave the table live.)
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -91,7 +95,7 @@ while [ $# -gt 0 ]; do
     --no-click) click=no; shift ;;
     --no-fetch) fetch=no; shift ;;
     --fetch-age) fetch_max_age="${2:?--fetch-age needs seconds}"; shift 2 ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) only="$1"; shift ;;
   esac
@@ -169,6 +173,7 @@ col_repo=0 col_pr=0 col_ahead=0 col_behind=0 col_tree=0
 # columns on branch names instead and name the collection above the table.
 show_coll=yes; [ -n "$only" ] && show_coll=no
 show_help=no   # ? toggles the key/icon reference; the footer stays one line
+show_archived=no  # a toggles merged PRs past 48 weekday-hours
 
 layout() { # recompute the columns for the terminal as it is now
   # stty asks the terminal itself; tput would believe an inherited $COLUMNS.
@@ -287,27 +292,37 @@ glyph_checks() { # <state> -> one column
     SUCCESS)                      printf '%s' "$G_OK" ;;
     FAILURE|ERROR)                printf '%s' "$G_BAD" ;;
     PENDING|EXPECTED)             printf '%s' "$G_RUN" ;;
-    draft)                        printf '\033[2m◌\033[0m' ;;
+    draft)                        printf '\033[33mD\033[0m' ;;  # draft; PRS also prints DRAFT
     *)                            printf '%s' "$G_NONE" ;;
   esac
 }
 
-glyph_merge() { # <mergeStateStatus> -> one column, blank when there is nothing to flag
+glyph_merge() { # <mergeStateStatus|MERGED> -> one column, blank when there is nothing to flag
   case "$1" in
     BEHIND)          printf '\033[33m↓\033[0m' ;;
     DIRTY)           printf '\033[31m⚠\033[0m' ;;
     BLOCKED)         printf '\033[33m⊘\033[0m' ;;
+    MERGED)          printf '\033[2m·\033[0m' ;;  # merged — fades with the row
     *)               printf ' ' ;;
   esac
 }
 
-glyph_review() { # <approved|changes|none|N> -> one column
+glyph_review() { # <approved|changes|waiting|commented|noreviewers|merged|none|N> -> one column
   case "$1" in
-    approved) printf '\033[32m✓\033[0m' ;;
-    changes)  printf '\033[31m!\033[0m' ;;
-    none|'')  printf ' ' ;;
-    *)        printf '\033[33m%s\033[0m' "$1" ;;   # unresolved comment count
+    approved)     printf '\033[32m✓\033[0m' ;;
+    changes)      printf '\033[31m!\033[0m' ;;
+    waiting)      printf '\033[33m…\033[0m' ;;          # reviewers assigned, silent
+    commented)    printf '\033[33m✎\033[0m' ;;          # reviewer participated, not approved
+    noreviewers)  printf '\033[31;1m⚠\033[0m' ;;       # ready-for-review with nobody assigned
+    merged)       printf '\033[2m·\033[0m' ;;
+    none|'')      printf ' ' ;;
+    *)            printf '\033[33m%s\033[0m' "$1" ;;   # unresolved comment count
   esac
+}
+
+# Bold yellow DRAFT tag for the PRS title / inline when checks say draft.
+draft_tag() { # -> prints DRAFT badge
+  printf '\033[33;1mDRAFT\033[0m'
 }
 
 # Both write to a variable rather than stdout: cells end in padding, and
@@ -391,8 +406,9 @@ repos_table() {
   for c in "$ROOT"/*/; do
     c="${c%/}"
     [ -d "$c/harness" ] || continue
-    name="$(basename "$c")"
-    if [ -n "$only" ] && [ "$name" != "$only" ]; then continue; fi
+    cname="$(basename "$c")"
+    name="$cname"
+    if [ -n "$only" ] && [ "$cname" != "$only" ]; then continue; fi
     for wt in "$c"/*/; do
       wt="${wt%/}"
       [ -e "$wt/.git" ] || continue
@@ -425,18 +441,26 @@ repos_table() {
       [ -n "$tree" ] || tree=clean
       # A detached HEAD has no branch to look a PR up by; ⌂ rows show no PR
       # because there is no work in flight to have one.
-      pr_num=""; pr_disp=""
+      pr_num=""; pr_draft=no
       if [ "$kind" = branch ]; then
-        IFS=$'\t' read -r pr_num pr_state pr_checks pr_merge pr_review _ <<EOF
+        # .wtc-prs is source of truth: an enlisted PR for this repo+branch is
+        # enriched directly (no GraphQL-by-headRef guess), and title/state come
+        # from the enlistment rather than a query that could miss a rename.
+        enlisted="$(wtc_pr_enlisted_for "$cname" "$repo" "$label" | head -n1)"
+        if [ -n "$enlisted" ]; then
+          pr_num="${enlisted%%$'\t'*}"
+          ent_title="${enlisted#*$'\t'}"
+          tsv_from_cmd _n pr_state pr_checks pr_merge pr_review _ _ _ -- \
+            wtc_pr_enrich "$repo" "$pr_num" "$ent_title" "$wt"
+          case "$pr_state" in OPEN|DRAFT) ;; *) pr_num="" ;; esac
+          [ "$pr_state" = DRAFT ] && pr_draft=yes
+        else
+          IFS=$'\t' read -r pr_num pr_state pr_checks pr_merge pr_review _ <<EOF
 $(pr_facts "$(slug_for_worktree "$wt" "$repo")" "$label")
 EOF
-        # A merged or closed PR is not in flight; the row for it is the orphan
-        # warning under PRS, not a PR cell that looks live.
-        [ "$pr_state" = OPEN ] || pr_num=""
-        if [ -n "$pr_num" ]; then
-          # Underline only the number: it is the click target, and underlining
-          # the icons beside it made the whole cell look like one button.
-          pr_disp="#$pr_num $(glyph_checks "$pr_checks")$(glyph_merge "$pr_merge")$(glyph_review "$pr_review")"
+          # A merged or closed PR is not in flight; the row for it is the
+          # orphan warning under PRS, not a PR cell that looks live.
+          [ "$pr_state" = OPEN ] || pr_num=""
         fi
       fi
 
@@ -453,9 +477,11 @@ EOF
       # "#225" alone, and the escape codes in the glyphs would break its
       # width arithmetic anyway.
       if [ -n "$pr_num" ]; then
+        checks_g="$(glyph_checks "$pr_checks")"
+        [ "$pr_draft" = yes ] && checks_g="$(glyph_checks draft)"
         term_x=$((col_pr + 4 + ${#pr_num} + 1))
         printf -v _cell '\033[4m#%s\033[24m %s%s%s %s' "$pr_num" \
-          "$(glyph_checks "$pr_checks")" "$(glyph_merge "$pr_merge")" \
+          "$checks_g" "$(glyph_merge "$pr_merge")" \
           "$(glyph_review "$pr_review")" "$TERM_GLYPH"
         pad=$((c_pr - (1 + ${#pr_num} + 1 + 3 + 1 + 1)))
         [ "$pad" -gt 0 ] && printf -v _cell '%s%*s' "$_cell" "$pad" ''
@@ -481,7 +507,7 @@ EOF
   return 0
 }
 
-prs_table() { # the collection's open PRs, in detail, keyed by the same numbers
+prs_table() { # the collection's enlisted PRs (.wtc-prs), in detail
   # Scoped runs only. Unscoped, this would be one gh call per repo per
   # collection on every redraw, which is a rate limit waiting to happen — so
   # the all-collections view keeps the inline PR column and nothing more.
@@ -489,50 +515,162 @@ prs_table() { # the collection's open PRs, in detail, keyed by the same numbers
   command -v gh >/dev/null 2>&1 || return 0
 
   rows="$(wtc_pr_list "$only" 2>/dev/null || true)"
-  # Read off the cache pass one already filled — no extra round trips.
+
+  # repo \t number \t checks \t merge \t review \t title \t archived \t
+  # merged_on \t draft — one row per enlisted PR (open/draft/merged). A row
+  # whose worktree still sits on the merged branch is flagged on_branch=yes
+  # and forced out of the quiet archive, so catch-up territory never goes
+  # silent; the plain orphan scan below then skips that repo+branch so the
+  # warning is not shown twice.
+  PR_ROW_REPO=(); PR_ROW_NUM=(); PR_ROW_CHECKS=(); PR_ROW_MERGE=()
+  PR_ROW_REVIEW=(); PR_ROW_TITLE=(); PR_ROW_SLUG=(); PR_ROW_ARCHIVED=()
+  PR_ROW_DRAFT=(); PR_ROW_ON_BRANCH=()
+  orphan_covered=""  # " repo|branch " already shown as an on-branch PR row
+
+  if [ -n "$rows" ]; then
+    enlist_rows="$(wtc_pr_enlist_rows "$only")"
+    while IFS=$'\t' read -r repo num checks merge review title archived merged_on draft; do
+      [ -n "$num" ] || continue
+      slug="$(repo_slug_for "$repo")"
+      [ -n "$slug" ] || slug="$repo"
+      enlist_br=""
+      while IFS=$'\t' read -r r n b _url _t; do
+        [ "$r" = "$repo" ] && [ "$n" = "$num" ] && enlist_br="$b"
+      done <<EOF
+$enlist_rows
+EOF
+      on_branch=no
+      if [ "$merge" = MERGED ] && [ -n "$enlist_br" ]; then
+        wt="$(wtc_repo_worktree "$only" "$repo")"
+        if [ -d "$wt" ]; then
+          cur="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+          if [ "$cur" = "$enlist_br" ]; then
+            on_branch=yes
+            archived=no  # catch-up needed — keep out of the quiet archive
+            orphan_covered="$orphan_covered $(basename "$wt")|$enlist_br "
+          fi
+        fi
+      fi
+      PR_ROW_REPO+=("$repo"); PR_ROW_NUM+=("$num"); PR_ROW_CHECKS+=("$checks")
+      PR_ROW_MERGE+=("$merge"); PR_ROW_REVIEW+=("$review"); PR_ROW_TITLE+=("$title")
+      PR_ROW_SLUG+=("$slug"); PR_ROW_ARCHIVED+=("$archived")
+      PR_ROW_DRAFT+=("$draft"); PR_ROW_ON_BRANCH+=("$on_branch")
+    done <<EOF
+$rows
+EOF
+  fi
+  pr_count="${#PR_ROW_NUM[@]}"
+
+  # A worktree still sitting on a branch whose per-branch PR cache says the
+  # PR is gone (merged/closed) is exactly what an open-PRs-only view hides —
+  # unless a PR row above already called it out in amber.
   orphans=""
   i=0
   while [ "$i" -lt "${#WTS[@]}" ]; do
     ob="${WT_BRANCH[$i]}"; os="${WT_SLUG[$i]}"
+    owt="${WTS[$i]}"
     if [ -n "$ob" ] && [ -n "$os" ]; then
+      case " $orphan_covered " in
+        *" $(basename "$owt")|$ob "*) i=$((i + 1)); continue ;;
+      esac
       IFS=$'\t' read -r _ ostate _ <<EOF
 $(pr_facts "$os" "$ob")
 EOF
       case "$ostate" in
         MERGED|CLOSED)
-          orphans="$orphans$(basename "${WTS[$i]}")	$ob	$ostate
-" ;;
+          orphans="$orphans$(basename "$owt")	$ob	$ostate
+"
+          ;;
       esac
     fi
     i=$((i + 1))
   done
-  [ -n "$rows$orphans" ] || return 0
+
+  [ "$pr_count" -gt 0 ] || [ -n "$orphans" ] || return 0
+
+  local active_n=0 archived_n=0
+  i=0
+  while [ "$i" -lt "$pr_count" ]; do
+    if [ "${PR_ROW_ARCHIVED[$i]:-no}" = yes ]; then
+      archived_n=$((archived_n + 1))
+    else
+      active_n=$((active_n + 1))
+    fi
+    i=$((i + 1))
+  done
 
   out ""
-  out $'\033[1m'"PRS  $(wtc_pr_label "$only")"$'\033[0m'
+  if [ "$active_n" -gt 0 ] || [ "$archived_n" -gt 0 ]; then
+    out $'\033[1m'"PRS"$'\033[0m'
+  fi
 
-  if [ -n "$rows" ]; then
-    while IFS=$'\t' read -r repo num checks merge review title; do
-      [ -n "$num" ] || continue
-      slug="$(repo_slug_for "$repo")"
-      fit "$repo" $c_repo
-      # Width is whatever is left; the title is the one thing safe to cut.
-      room=$((cols - prs_x_num - prs_w_num - c_repo - 10))
-      [ "$room" -ge 10 ] || room=10
-      # Underline on the number only — it is the click target. The chevron is
-      # underlined too because it is the other one; nothing else is.
-      printf -v num_f '%-6s' "#$num"
-      printf -v prow '  \033[4m#%s\033[24m%*s%s %s%s%s \033[4m%s\033[24m  %s' \
+  _draw_pr_row() { # <index> [archived]
+    local idx="$1" as_archived="${2:-no}"
+    local repo num checks merge review title slug draft on_branch prow room show tag
+    repo="${PR_ROW_REPO[$idx]:-}"
+    num="${PR_ROW_NUM[$idx]:-}"
+    checks="${PR_ROW_CHECKS[$idx]:-}"
+    merge="${PR_ROW_MERGE[$idx]:-}"
+    review="${PR_ROW_REVIEW[$idx]:-}"
+    title="${PR_ROW_TITLE[$idx]:-}"
+    slug="${PR_ROW_SLUG[$idx]:-}"
+    draft="${PR_ROW_DRAFT[$idx]:-no}"
+    on_branch="${PR_ROW_ON_BRANCH[$idx]:-no}"
+    [ -n "$num" ] || return 0
+    fit "$repo" $c_repo
+    room=$((cols - prs_x_num - prs_w_num - c_repo - 10))
+    [ "$room" -ge 10 ] || room=10
+    show="${title:0:$room}"
+    prs_x_term=$((prs_x_num + prs_w_num + c_repo + 5))
+    if [ "$on_branch" = yes ]; then
+      # Same amber as the orphan warning — merged but still checked out.
+      printf -v prow '  ⚠ #%s%*s%s  %s' \
+        "$num" $((prs_w_num - 1 - ${#num})) '' "$_fit" "$show"
+      out $'\033[33m'"$prow"$'\033[0m'
+    elif [ "$as_archived" = yes ]; then
+      printf -v prow '  #%s%*s%s  %s' \
+        "$num" $((prs_w_num - 1 - ${#num})) '' "$_fit" "$show"
+      out $'\033[2m'"$prow"$'\033[0m'
+    elif [ "$merge" = MERGED ]; then
+      # Fade rather than disappear — the row is still there to click.
+      printf -v prow '  #%s%*s%s  %s' \
+        "$num" $((prs_w_num - 1 - ${#num})) '' "$_fit" "$show"
+      out $'\033[2m'"$prow"$'\033[0m'
+    else
+      tag=""
+      if [ "$draft" = yes ] || [ "$checks" = draft ]; then
+        tag="$(draft_tag) "
+      fi
+      # Underline on the number and chevron only — those are the click
+      # targets; nothing else in the row is.
+      printf -v prow '  \033[4m#%s\033[24m%*s%s %s%s%s%s \033[4m%s\033[24m  %s' \
         "$num" $((prs_w_num - 1 - ${#num})) '' "$_fit" \
+        "$tag" \
         "$(glyph_checks "$checks")" "$(glyph_merge "$merge")" "$(glyph_review "$review")" \
-        "$TERM_GLYPH" "${title:0:$room}"
-      prs_x_term=$((prs_x_num + prs_w_num + c_repo + 5))
+        "$TERM_GLYPH" "$show"
       out "$prow"
-      PROWS[$line]="$slug|$num"
-    done <<EOF
-$rows
-EOF
+    fi
+    PROWS[$line]="$slug|$num"
+  }
 
+  i=0
+  while [ "$i" -lt "$pr_count" ]; do
+    [ "${PR_ROW_ARCHIVED[$i]:-no}" = yes ] || _draw_pr_row "$i"
+    i=$((i + 1))
+  done
+
+  if [ "$archived_n" -gt 0 ]; then
+    if [ "$show_archived" = yes ]; then
+      out $'\033[2m'"ARCHIVED"$'\033[0m'
+      i=0
+      while [ "$i" -lt "$pr_count" ]; do
+        [ "${PR_ROW_ARCHIVED[$i]:-no}" = yes ] && _draw_pr_row "$i" yes
+        i=$((i + 1))
+      done
+      out $'\033[2m'"▸ archived · a to hide"$'\033[0m'
+    else
+      out $'\033[2m'"▸ archived ($archived_n) · a to show"$'\033[0m'
+    fi
   fi
 
   # A worktree still sitting on a branch whose PR has already gone is exactly
@@ -554,18 +692,21 @@ EOF
 # nobody reads twice.
 legend() {
   out ""
-  out $'\033[2m'"? keys · s select · r redraw · q quit"$'\033[0m'
+  out $'\033[2m'"? keys · a archived · s select · r redraw · q quit"$'\033[0m'
 }
 
 help_block() {
   d=$'\033[2m'; z=$'\033[0m'; k=$'\033[1m'
   out ""
-  out "${k}KEYS${z}    ${d}?${z} this list   ${d}s${z} select text   ${d}r${z} redraw   ${d}q${z} quit"
+  out "${k}KEYS${z}    ${d}?${z} this list   ${d}a${z} archived   ${d}s${z} select text   ${d}r${z} redraw   ${d}q${z} quit"
   out "${k}CLICK${z}   ${d}REPO${z} open in nvim   ${d}TREE${z} git status   ${d}#n${z} github.com   ${d}$TERM_GLYPH${z} octo in browse"
   out ""
   out "${k}CHECKS${z}  $(glyph_checks SUCCESS) passing   $(glyph_checks FAILURE) failing   $(glyph_checks PENDING) running   $(glyph_checks draft) draft   $(glyph_checks NONE) none"
   out "${k}MERGE${z}   $(glyph_merge BEHIND) behind base   $(glyph_merge DIRTY) conflict   $(glyph_merge BLOCKED) blocked   ${d}blank${z} clean"
-  out "${k}REVIEW${z}  $(glyph_review approved) approved   $(glyph_review changes) changes requested   $(glyph_review 3) unresolved threads   ${d}blank${z} none"
+  out "${k}REVIEW${z}  $(glyph_review approved) approved   $(glyph_review changes) changes   $(glyph_review commented) commented   $(glyph_review waiting) waiting   $(glyph_review noreviewers) no reviewers   $(glyph_review 3) unresolved threads"
+  out "${k}DRAFT${z}   $(draft_tag) open draft — reviewers optional until ready"
+  out "${k}MERGED${z}  faded almost away; still on that branch → amber ⚠ (catch-up); after 48 weekday-hours → ${d}a${z} archived"
+  out "${k}PRS${z}     from <collection>/.wtc-prs (\`tools/wtc-pr.sh enlist\`), not a forge label search"
 }
 
 procs_table() {
@@ -788,6 +929,8 @@ wait_events() { # until the next redraw is due, or a key asks for one
         s|S) select_mode; return 0 ;;
         '?'|h|H) if [ "$show_help" = yes ]; then show_help=no; else show_help=yes; fi
                  return 0 ;;
+        a|A) if [ "$show_archived" = yes ]; then show_archived=no; else show_archived=yes; fi
+             return 0 ;;
         $'\033') read_mouse ;;
       esac
     else

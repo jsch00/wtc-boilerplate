@@ -5,6 +5,27 @@
 # Bash 3.2-safe (macOS default): no mapfile, no associative arrays.
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: tools/refresh-configs.sh
+
+Regenerates the local .harness-repos (name=bare-path, gitignored) from the
+workspace .bare/ directory, and warns about bares missing from the tracked
+.harness-repos.yml registry or listed there without a local clone.
+
+Takes no options. Idempotent — run it whenever a bare is added or removed.
+EOF
+  exit "${1:-1}"
+}
+
+# Parse before doing anything: this tool writes a file, so `--help` must not
+# be answered by going ahead and writing it.
+case "${1:-}" in
+  -h|--help) usage 0 ;;
+  "") ;;
+  *) echo "unknown option: $1" >&2; usage ;;
+esac
+
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 harness_dir="$(dirname "$script_dir")"
 root="$harness_dir"

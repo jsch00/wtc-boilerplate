@@ -50,6 +50,42 @@ per repo in its own `AGENTS.md` — issue-file-only edits committing straight to
 the working branch, or harness bring-up using ordinary commits on `main` while
 the workspace is still being stood up.
 
+## Catch-up
+
+Treat "catch up" as: reconcile this collection with development outside it.
+
+1. Fetch/prune every sibling owner (`.bare/` and unmanaged `ext.*` clones).
+2. Worktrees detached at tip → fast-forward to current `default_ref`. If
+   dirty, stash (including untracked), move HEAD, then stash pop. Already at
+   the tip is left alone regardless of dirty state — there is nothing to move.
+3. Active unmerged branches → merge the tip in; same stash-around-the-move;
+   push the merge when the branch has a PR (open or draft); abort and report
+   on conflicts rather than resolving them.
+4. Merged PRs → stash if dirty; detach at tip; prune the local branch when
+   `git branch -d` allows it; `tools/wtc-pr.sh unlist <repo> <n>` for an
+   enlisted row that landed.
+5. Re-run `tools/link-skills.sh`, `tools/link-mcp.sh`, `tools/refresh-env.sh`
+   and `tools/link-secrets.sh`.
+
+Do not skip a dirty sibling that is behind — stash, move, pop. Mid-merge or
+mid-rebase is still a skip; that is someone else's in-progress operation.
+
+### Local PR enlistment
+
+Which PRs belong to a collection is **local**, not a forge label:
+
+```bash
+tools/wtc-pr.sh enlist <repo> <n> --branch <working-branch>
+tools/wtc-pr.sh list
+tools/wtc-pr.sh unlist <repo> <n>
+```
+
+File: `<collection>/.wtc-prs` (dies with `retire.sh`). Catch-up's "has this
+PR merged?" check reads it first; `gh` only enriches state/title when asked,
+and is the fallback for a branch that was never enlisted.
+
+Procedure: skill `wtc-catch-up`. Script: `tools/catch-up.sh`.
+
 ## Why
 
 - **Branch name as issue-mapping** — the name encodes which issue the commits

@@ -43,7 +43,7 @@ and leaves an ephemeral HANDOFF.md launch note.
                 running yet (default: join a session that is already up)
   --no-open     never open it; just print the command
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 branch="" issue="" tracker="" pr="" open_wtc=auto
@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
     --issue) issue="${2:?--issue needs an issue id}"; shift 2 ;;
     --tracker) tracker="${2:?--tracker needs a tracker key}"; shift 2 ;;
     --pr) pr="${2:?--pr needs <repo>#<number>}"; shift 2 ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) break ;;
   esac

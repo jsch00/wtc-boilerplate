@@ -36,8 +36,9 @@ the human reading the pane, not for you. Each target does one thing: `REPO`
 focuses that sibling in the browse nvim, `TREE` opens its diff view, the PR
 **number** opens the pull request on github.com, and `❯` opens it in Octo in
 the browse pane. `s` hands the mouse back so text can be selected (which also
-freezes the table, since a redraw mid-drag would clear the selection), and `?`
-shows the key and icon reference.
+freezes the table, since a redraw mid-drag would clear the selection), `a`
+toggles merged PRs past 48 weekday-hours, and `?` shows the key and icon
+reference.
 
 ## Reading it
 
@@ -72,25 +73,29 @@ Commits ahead of and behind the remote, blank when zero.
 to say — so a healthy PR is just `#225 ✓`.
 
 - **checks** — `✓` passing · `✗` failing (that's `wtc-pr` §6.1) · `●` running,
-  nothing to conclude yet · `◌` draft · `·` no checks reported
-- **merge** — `↓` behind its base · `⚠` conflicts · `⊘` blocked · blank clean
-- **review** — `N` unresolved review threads · `✓` approved · `!` changes
-  requested · blank nothing outstanding
+  nothing to conclude yet · `D` draft · `·` no checks reported
+- **merge** — `↓` behind its base · `⚠` conflicts · `⊘` blocked · `·` merged
+  (fading) · blank clean
+- **review** — `✓` approved · `!` changes requested · `…` waiting on assigned
+  reviewers · `✎` commented, not yet approved · `⚠` ready with no reviewers
+  assigned · `N` unresolved review threads · blank nothing outstanding
 
 Blank overall means no open PR. Expected for `⌂` rows: nothing is in flight to
 have one.
 
 **PRS section** (scoped to one collection)
 
-Lists the open PRs *this collection* opened, found by the `wtc:<collection>`
-label the PR skills apply — so they are still listed after the worktree has
-gone back to the tip, and a collection carrying several PRs shows all of them
-rather than one per worktree. The numbers match the inline `PR` column, so the
-two views correlate by eye.
+Lists the PRs enlisted for this collection in `<collection>/.wtc-prs`
+(`tools/wtc-pr.sh enlist` — see the `wtc-pr` skill), not a forge label search —
+so it costs no round trips beyond enriching what is already listed, and it is
+still listed after the worktree has gone back to the tip. An open draft shows
+a `DRAFT` badge. A **MERGED** PR fades rather than disappearing, and after 48
+weekday-hours since merge it collapses behind the `a` (archived) toggle — `a`
+shows a count when there is anything hidden.
 
-It also calls out a worktree still sitting on a branch whose PR has already
-merged or closed — the one thing an open-PRs-only view would otherwise hide,
-and exactly what a catch-up clears.
+A worktree still sitting on a branch whose PR has already merged or closed is
+called out in **amber** (`⚠ #N`) — the one thing an open-PRs-only view would
+otherwise hide, and exactly what a catch-up clears.
 
 Unscoped runs skip the section: it is one API call per repo per collection, and
 a `--watch` pane doing that across every collection is a rate limit waiting to

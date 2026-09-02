@@ -16,14 +16,14 @@ Remote branches are NEVER touched — they are the per-issue record
 go with the worktrees; anything they held that was not pushed is what the
 pre-flight refuses on.
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 force=no
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) force=yes; shift ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) break ;;
   esac
@@ -103,18 +103,22 @@ EOF
 # .env.collection.local is the collection-scoped secrets tier — it dies with
 # the collection (credentials scoped to this wtc's work have nowhere to go).
 # AGENTS.md is the collection-root symlink; WTC-SCOPE.md is the seeded copy.
+# .wtc-prs is the local PR enlistment (instructions/development-workflows.md
+# → Catch-up); .wtc-status.json/.wtc-status.md are wtc-status.sh's caches.
+# All three are collection-scoped and disposable — nothing durable lives here.
 rm -f "$dest_root/HANDOFF.md" "$dest_root/.env.collection" \
   "$dest_root/.env.collection.local" "$dest_root/mise.toml" "$dest_root/.DS_Store" \
   "$dest_root/AGENTS.md" "$dest_root/WTC-SCOPE.md" "$dest_root/.mcp.json" \
-  "$dest_root/.envrc" "$dest_root/.env.toolchain"
+  "$dest_root/.envrc" "$dest_root/.env.toolchain" \
+  "$dest_root/.wtc-prs" "$dest_root/.wtc-status.json" "$dest_root/.wtc-status.md"
 # Generated agent-config dirs — skill symlinks into harness/skills and the
 # toolchain hook into harness/hooks (link-skills.sh), and the rendered MCP
 # configs (link-mcp.sh). Nothing of their own. Without this the rmdir below
 # always finds them and reports the collection as "left in place".
 #
 # Whenever a tool starts writing a new collection-root path, it belongs in one
-# of these two lists. Them going stale as surfaces were added is what
-# weeks-agent-harness#15 was.
+# of these two lists. Them going stale as surfaces get added is the bug this
+# comment exists to prevent, and it has happened twice.
 rm -rf "$dest_root/.claude" "$dest_root/.agents" "$dest_root/.cursor" "$dest_root/.codex" \
   "$dest_root/.grok"
 if rmdir "$dest_root" 2>/dev/null; then
