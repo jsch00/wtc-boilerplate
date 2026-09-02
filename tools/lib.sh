@@ -286,6 +286,22 @@ slug_for_worktree() { # <worktree> [repo-name] -> owner/repo
   printf '%s\n' "${slug%.git}"
 }
 
+# owner/repo out of a github remote URL, ssh or https. Empty for anything
+# else, which is the caller's signal to skip that remote rather than guess.
+github_slug_from_url() { # <url> -> owner/repo, or empty
+  case "${1:-}" in *github.com[:/]*) ;; *) return 0 ;; esac
+  _s="${1#*github.com}"; _s="${_s#:}"; _s="${_s#/}"
+  printf '%s\n' "${_s%.git}"
+}
+
+# The repo a sibling contributes *to*, when that is not the repo it pushes to.
+# A fork checkout has both: origin is your copy, upstream is the one the PR is
+# opened against, and everything user-facing about that PR — its number, its
+# checks, the URL a click should open — lives on the upstream, not on origin.
+upstream_slug_for_worktree() { # <worktree> -> owner/repo, or empty
+  github_slug_from_url "$(git -C "$1" remote get-url upstream 2>/dev/null || true)"
+}
+
 repo_for_issue_prefix() { # <prefix incl. trailing dash> -> repo name owning it
   awk -v pfx="$1" '
     $1 == "-" && $2 == "name:"          { cur = $3 }
@@ -923,9 +939,8 @@ wtc_pr_list() { # <collection> -> TSV rows, one per open PR this collection has
   for wt in "$ROOT/$1"/*/; do
     wt="${wt%/}"
     [ -e "$wt/.git" ] || continue
-    up="$(git -C "$wt" remote get-url upstream 2>/dev/null)" || continue
-    case "$up" in *github.com[:/]*) ;; *) continue ;; esac
-    up="${up#*github.com}"; up="${up#:}"; up="${up#/}"; up="${up%.git}"
+    up="$(upstream_slug_for_worktree "$wt")"
+    [ -n "$up" ] || continue
     case " $own_slugs $out_slugs " in *" $up "*) continue ;; esac
     # Asked once, and only if there is an upstream to ask about.
     [ -n "$me" ] || me="$(gh api user --jq .login 2>/dev/null || true)"

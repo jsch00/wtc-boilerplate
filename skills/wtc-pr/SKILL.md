@@ -93,6 +93,19 @@ Already-pushed and nothing new is fine — say "nothing to push" and move on.
 Never force-push a branch that has an open PR unless the user asks: it
 detaches existing review comments.
 
+**Pushing to a fork** — when the PR goes to a sibling's upstream and the
+branch has to live on your fork — push it under **the same name it has here**:
+
+```bash
+git push https://github.com/<you>/<repo>.git HEAD:refs/heads/$(git branch --show-current)
+```
+
+`wtc-status` looks a branch's PR up by that name on both the sibling's origin
+and its upstream, so a fork branch named something else leaves the row blank
+for work that is in review. Renaming it afterwards does not repair this:
+GitHub **closes** a cross-fork PR when its head branch is renamed rather than
+retargeting it, and a closed PR cannot be reopened onto the new name.
+
 ## 5. Open the PR
 
 ```bash

@@ -358,7 +358,7 @@ repos_table() {
   # Sequential lookups were the whole of the render time; the walk itself is
   # local git and costs nothing.
   mkdir -p "$PR_CACHE" 2>/dev/null || true
-  WTS=(); WT_REPO=(); WT_SLUG=(); WT_BRANCH=()
+  WTS=(); WT_REPO=(); WT_SLUG=(); WT_BRANCH=(); WT_UPSTREAM=()
   for c in "$ROOT"/*/; do
     c="${c%/}"
     [ -d "$c/harness" ] || continue
@@ -370,9 +370,21 @@ repos_table() {
       wrepo="$(basename "$wt")"; [ "$wrepo" = harness ] && wrepo="$(harness_repo)"
       wbranch="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null || true)"
       wslug="$(slug_for_worktree "$wt" "$wrepo")"
+      # The repo a fork checkout contributes to. Its PRs are the ones that
+      # matter for that sibling and they are not on origin at all, so the
+      # branch has to be looked up in both places (below).
+      wup="$(upstream_slug_for_worktree "$wt")"
+      case "$wup" in "$wslug") wup="" ;; esac
       WTS+=("$wt"); WT_REPO+=("$wrepo"); WT_SLUG+=("$wslug"); WT_BRANCH+=("$wbranch")
+      WT_UPSTREAM+=("$wup")
       if [ -n "$wbranch" ] && [ -n "$wslug" ] && command -v gh >/dev/null 2>&1; then
         pr_fetch_bg "$wslug" "$wbranch"
+        # Fired alongside rather than after: the whole point of this block is
+        # that every round trip is in flight at once, and a fallback that
+        # waited for the first answer would put one back in series. GitHub
+        # matches a cross-fork PR by head branch on the base repo, so the
+        # same query answers for the upstream unchanged.
+        [ -z "$wup" ] || pr_fetch_bg "$wup" "$wbranch"
       fi
     done
   done
@@ -428,18 +440,38 @@ repos_table() {
       [ -n "$tree" ] || tree=clean
       # A detached HEAD has no branch to look a PR up by; ⌂ rows show no PR
       # because there is no work in flight to have one.
-      pr_num=""; pr_disp=""
+      pr_num=""; pr_disp=""; pr_slug=""; pr_sigil="#"
       if [ "$kind" = branch ]; then
+        pr_slug="$(slug_for_worktree "$wt" "$repo")"
         IFS=$'\t' read -r pr_num pr_state pr_checks pr_merge pr_review _ <<EOF
-$(pr_facts "$(slug_for_worktree "$wt" "$repo")" "$label")
+$(pr_facts "$pr_slug" "$label")
 EOF
         # A merged or closed PR is not in flight; the row for it is the orphan
         # warning under PRS, not a PR cell that looks live.
         [ "$pr_state" = OPEN ] || pr_num=""
+        # Nothing on origin means this may be a fork checkout, whose PR was
+        # opened against the repo it forked — there is no PR on origin to find
+        # and the cell would read "no PR yet" for work that is in review. Ask
+        # the upstream for the same branch; GitHub matches a cross-fork PR by
+        # head branch on the base repo. Origin still wins when both answer:
+        # that is the one this worktree is pushing to.
+        if [ -z "$pr_num" ]; then
+          up_slug="$(upstream_slug_for_worktree "$wt")"
+          if [ -n "$up_slug" ] && [ "$up_slug" != "$pr_slug" ]; then
+            IFS=$'\t' read -r pr_num pr_state pr_checks pr_merge pr_review _ <<EOF
+$(pr_facts "$up_slug" "$label")
+EOF
+            [ "$pr_state" = OPEN ] || pr_num=""
+            # ↗ in place of #, the same mark the PRS section uses. It costs no
+            # width and it has to be said: the number belongs to someone
+            # else's repo, and so does the page a click on it opens.
+            if [ -n "$pr_num" ]; then pr_slug="$up_slug"; pr_sigil="↗"; fi
+          fi
+        fi
         if [ -n "$pr_num" ]; then
           # Underline only the number: it is the click target, and underlining
           # the icons beside it made the whole cell look like one button.
-          pr_disp="#$pr_num $(glyph_checks "$pr_checks")$(glyph_merge "$pr_merge")$(glyph_review "$pr_review")"
+          pr_disp="$pr_sigil$pr_num $(glyph_checks "$pr_checks")$(glyph_merge "$pr_merge")$(glyph_review "$pr_review")"
         fi
       fi
 
@@ -457,7 +489,7 @@ EOF
       # width arithmetic anyway.
       if [ -n "$pr_num" ]; then
         term_x=$((col_pr + 4 + ${#pr_num} + 1))
-        printf -v _cell '\033[4m#%s\033[24m %s%s%s %s' "$pr_num" \
+        printf -v _cell '\033[4m%s%s\033[24m %s%s%s %s' "$pr_sigil" "$pr_num" \
           "$(glyph_checks "$pr_checks")" "$(glyph_merge "$pr_merge")" \
           "$(glyph_review "$pr_review")" "$TERM_GLYPH"
         pad=$((c_pr - (1 + ${#pr_num} + 1 + 3 + 1 + 1)))
@@ -473,7 +505,10 @@ EOF
       out "$row"
       # $label, not $branch: the click map wants a real ref for `gh browse`,
       # not the ⌂-prefixed display string.
-      ROWS[$line]="$wt|$(slug_for_worktree "$wt" "$repo")|$label|$pr_num"
+      # $pr_slug, not the worktree's origin: when the PR is on the upstream,
+      # that is the repo a click has to open. Falls back for a ⌂ row, which
+      # has no PR and so no slug of its own to carry.
+      ROWS[$line]="$wt|${pr_slug:-$(slug_for_worktree "$wt" "$repo")}|$label|$pr_num"
       TERMX[$line]=$term_x
       name=""
     done
@@ -573,7 +608,7 @@ help_block() {
   out ""
   out "${k}KEYS${z}    ${d}?${z} this list   ${d}s${z} select text   ${d}r${z} redraw   ${d}q${z} quit"
   out "${k}CLICK${z}   ${d}REPO${z} open in nvim   ${d}TREE${z} git status   ${d}#n${z} github.com   ${d}$TERM_GLYPH${z} octo in browse"
-  out "${k}PRS${z}     ${d}↗${z} sent to that owner's repo, not one of yours"
+  out "${k}PRS${z}     ${d}↗${z} sent to that owner's repo, not one of yours — ${d}↗n${z} in PR too"
   out ""
   out "${k}CHECKS${z}  $(glyph_checks SUCCESS) passing   $(glyph_checks FAILURE) failing   $(glyph_checks PENDING) running   $(glyph_checks draft) draft   $(glyph_checks NONE) none"
   out "${k}MERGE${z}   $(glyph_merge BEHIND) behind base   $(glyph_merge DIRTY) conflict   $(glyph_merge BLOCKED) blocked   ${d}blank${z} clean"
