@@ -105,12 +105,18 @@ EOF
 # AGENTS.md is the collection-root symlink; WTC-SCOPE.md is the seeded copy.
 rm -f "$dest_root/HANDOFF.md" "$dest_root/.env.collection" \
   "$dest_root/.env.collection.local" "$dest_root/mise.toml" "$dest_root/.DS_Store" \
-  "$dest_root/AGENTS.md" "$dest_root/WTC-SCOPE.md" "$dest_root/.mcp.json"
-# Generated agent-config dirs — skill symlinks into harness/skills
-# (link-skills.sh) and the rendered MCP configs (link-mcp.sh). Nothing of their
-# own. Without this the rmdir below always finds them and reports the
-# collection as "left in place".
-rm -rf "$dest_root/.claude" "$dest_root/.agents" "$dest_root/.cursor" "$dest_root/.codex"
+  "$dest_root/AGENTS.md" "$dest_root/WTC-SCOPE.md" "$dest_root/.mcp.json" \
+  "$dest_root/.envrc" "$dest_root/.env.toolchain"
+# Generated agent-config dirs — skill symlinks into harness/skills and the
+# toolchain hook into harness/hooks (link-skills.sh), and the rendered MCP
+# configs (link-mcp.sh). Nothing of their own. Without this the rmdir below
+# always finds them and reports the collection as "left in place".
+#
+# Whenever a tool starts writing a new collection-root path, it belongs in one
+# of these two lists. Them going stale as surfaces were added is what
+# weeks-agent-harness#15 was.
+rm -rf "$dest_root/.claude" "$dest_root/.agents" "$dest_root/.cursor" "$dest_root/.codex" \
+  "$dest_root/.grok"
 if rmdir "$dest_root" 2>/dev/null; then
   echo "done: retired $dest_root"
 else
