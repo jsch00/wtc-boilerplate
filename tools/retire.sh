@@ -117,8 +117,8 @@ rm -f "$dest_root/HANDOFF.md" "$dest_root/.env.collection" \
 # always finds them and reports the collection as "left in place".
 #
 # Whenever a tool starts writing a new collection-root path, it belongs in one
-# of these two lists. Them going stale as surfaces were added is what
-# weeks-agent-harness#15 was.
+# of these two lists. Them going stale as surfaces get added is the bug this
+# comment exists to prevent, and it has happened twice.
 rm -rf "$dest_root/.claude" "$dest_root/.agents" "$dest_root/.cursor" "$dest_root/.codex" \
   "$dest_root/.grok"
 if rmdir "$dest_root" 2>/dev/null; then
