@@ -113,8 +113,8 @@ gh pr view --json number --jq .number   # the number gh just created
 tools/wtc-pr.sh enlist <repo> <n> --branch <working-branch>
 ```
 
-This is how `wtc-catch-up` (and, once it moves off labels, `wtc-status`) find
-this PR later — a local mapping in `<collection>/.wtc-prs`, not a forge label.
+This is how `wtc-catch-up` and `wtc-status` find this PR later — a local
+mapping in `<collection>/.wtc-prs`, not a forge label.
 It survives everything a label would, for the one thing that actually matters
 here: this collection's own tools reading it back. `tools/wtc-pr.sh list`
 shows what is currently enlisted; `unlist` drops a row that merged, closed, or

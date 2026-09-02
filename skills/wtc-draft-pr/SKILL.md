@@ -47,10 +47,9 @@ gh pr view --json number --jq .number   # the number gh just created
 tools/wtc-pr.sh enlist <repo> <n> --branch <working-branch>
 ```
 
-This — not a label — is how `wtc-catch-up` and (once it moves off labels)
-`wtc-status` find the PR later. A label is optional and secondary now: add one
-only if the repo's own conventions want it, never as a substitute for
-enlisting.
+This — not a label — is how `wtc-catch-up` and `wtc-status` find the PR later.
+A label is optional and secondary now: add one only if the repo's own
+conventions want it, never as a substitute for enlisting.
 
 If a draft already exists, just push; there is nothing else to do. Check
 `tools/wtc-pr.sh list` first — if it was never enlisted (an older draft, or one

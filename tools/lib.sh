@@ -957,44 +957,82 @@ wtc_pr_enlisted_for() { # <collection> <repo> <branch> -> number \t title
   done
 }
 
-# Forge enrichment for one enlisted PR → TSV shape used by catch-up (and later
-# by status, once it moves off labels):
+# Optional forge enrichment for one enlisted PR → cache TSV shape used by
+# status and catch-up:
 #   number \t state \t checks \t merge \t review \t title \t merge_commit \t merged_on
-# state DRAFT = open draft. Slim on purpose: catch-up only ever reads column 2
-# (state). checks/merge/review/merge_commit/merged_on are left NONE/UNKNOWN/
-# none/empty rather than ported from harness's richer wtc-pr-facts.py — that
-# lives on Bitbucket's checks/review shape and buys nothing here yet. Wire it
-# up (or a GitHub-flavoured equivalent) if/when status moves onto this file.
+# state DRAFT = open draft. review: noreviewers|waiting|commented|changes|
+# approved|merged|none|<N>. Richer facts (checks rollup, review decision,
+# merged-at) come from tools/wtc-pr-facts.py gh-from-json when it is present;
+# without it (or without gh), every row still gets state/title from a slim
+# `gh pr view`, which is all catch-up ever reads (column 2 only).
+wtc_pr_facts_py() {
+  printf '%s\n' "${HARNESS_DIR:-}/tools/wtc-pr-facts.py"
+}
+
 wtc_pr_enrich() { # <repo> <number> [fallback-title] [worktree] -> TSV line
   repo="$1" num="$2" title="${3:-}"
-  if command -v gh >/dev/null 2>&1; then
-    IFS=$'\t' read -r slug _forge <<EOF
+  command -v gh >/dev/null 2>&1 || {
+    printf '%s\tOPEN\tNONE\tUNKNOWN\tnone\t%s\t\t\n' "$num" "$title"
+    return 0
+  }
+  IFS=$'\t' read -r slug _forge <<EOF
 $(repo_slug_and_forge "$repo" "${4:-}")
 EOF
-    [ -n "$slug" ] || slug="$repo"
+  [ -n "$slug" ] || slug="$repo"
+  _facts_py="$(wtc_pr_facts_py)"
+  if [ -f "$_facts_py" ]; then
     row="$(gh pr view "$num" --repo "$slug" \
-      --json number,state,isDraft,title \
-      --jq '[(.number|tostring),
-             (if .isDraft then "DRAFT" else .state end),
-             "NONE", "UNKNOWN", "none", (.title // ""), "", ""] | @tsv' \
-      2>/dev/null || true)"
+      --json number,state,title,isDraft,statusCheckRollup,reviewDecision,mergeCommit,reviewRequests,latestReviews,mergedAt,updatedAt \
+      2>/dev/null | python3 "$_facts_py" gh-from-json \
+        --num "$num" --title "$title" 2>/dev/null || true)"
     if [ -n "$row" ]; then
       printf '%s\n' "$row"
       return 0
     fi
   fi
+  row="$(gh pr view "$num" --repo "$slug" \
+    --json number,state,isDraft,title \
+    --jq '[(.number|tostring),
+           (if .isDraft then "DRAFT" else .state end),
+           "NONE", "UNKNOWN", "none", (.title // ""), "", ""] | @tsv' \
+    2>/dev/null || true)"
+  if [ -n "$row" ]; then
+    printf '%s\n' "$row"
+    return 0
+  fi
   printf '%s\tOPEN\tNONE\tUNKNOWN\tnone\t%s\t\t\n' "$num" "$title"
 }
 
-# --- collection PR label (legacy — prefer .wtc-prs above) -------------------
-# Which collection launched a PR, kept on the PR itself via a label. Status
-# still reads this (wtc_pr_label / wtc_pr_list below) until it is repointed at
-# .wtc-prs in a follow-up commit. New code — wtc-pr.sh, catch-up.sh — should
-# enlist instead of relying on this; a label is a nice-to-have cross-check,
-# not how anything finds a PR any more.
-#
-# Keeping it: it survives a retired collection (a local file does not), and a
-# server-side filter costs nothing extra once a PR already carries the label.
+# Capture a command's stdout, then IFS-split one TSV line into variables.
+# Needed because `IFS=$'\t' read <<EOF / $(cmd)` runs $(cmd) with IFS=tab only,
+# which breaks `for x in $(registry_all_names)` and similar word-splits inside cmd.
+tsv_from_cmd() { # <varnames…> -- <command…>
+  _tsv_save_ifs=$IFS
+  _tsv_vars=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --) shift; break ;;
+      *) _tsv_vars="$_tsv_vars $1"; shift ;;
+    esac
+  done
+  # Callers often sit in `while IFS=$'\t' read`; a tab-only IFS makes
+  # `for x in $(registry_all_names)` one word. Restore default IFS for the
+  # command and for splitting $_tsv_vars into read destinations.
+  IFS=$' \t\n'
+  _tsv_line="$("$@")"
+  set -- $_tsv_vars
+  IFS=$'\t' read -r "$@" <<EOF
+${_tsv_line}
+EOF
+  IFS=$_tsv_save_ifs
+}
+
+# --- collection PR label (legacy — .wtc-prs is source of truth now) --------
+# A label kept on the PR itself, from before .wtc-prs existed. Nothing reads
+# it any more — wtc_pr_list below walks the local enlistment file instead —
+# but the helpers stay: they are harmless to keep applying (a nice-to-have
+# cross-check visible on the PR itself), and dropping them would be its own
+# little migration for every repo that already carries the label.
 
 wtc_pr_label() { # [collection] -> the label this collection's PRs carry
   name="${1:-}"
@@ -1020,64 +1058,57 @@ wtc_pr_label_add() { # <slug> <pr-number> <label> — tag an existing PR
   gh pr edit "$2" --repo "$1" --add-label "$3" >/dev/null 2>&1 || true
 }
 
-wtc_pr_list() { # <collection> -> TSV rows, one per open PR this collection owns
-  # repo \t number \t checks \t merge \t review \t title
-  #
-  # checks: SUCCESS|FAILURE|ERROR|PENDING|draft|NONE
-  # merge:  mergeStateStatus (BEHIND / DIRTY / BLOCKED / CLEAN / …)
-  # review: approved | changes | <count of unresolved threads> | none
-  #
-  # One GraphQL round trip per repo returns every fact a row shows, and the
-  # repos are queried in parallel — the same shape wtc-status uses per branch.
-  #
-  # Only open PRs: a merged one is not something you act on, and the row that
-  # matters after a merge is the worktree still sitting on that branch, which
-  # wtc_pr_orphans reports instead.
-  command -v gh >/dev/null 2>&1 || return 0
-  label="$(wtc_pr_label "$1")"
-  tmp="$(mktemp -d)"
-  # Driven by the collection's worktrees rather than the registry: that covers
-  # `ext.` siblings, and it stops a two-repo collection querying every repo the
-  # workspace has ever owned.
-  for wt in "$ROOT/$1"/*/; do
-    wt="${wt%/}"
-    [ -e "$wt/.git" ] || continue
-    repo="$(basename "$wt")"
-    [ "$repo" = harness ] && repo="$(harness_repo)"
-    slug="$(slug_for_worktree "$wt" "$repo")"
-    [ -n "$slug" ] || continue
-    (
-      gh api graphql -F owner="${slug%%/*}" -F name="${slug#*/}" -F label="$label" -f query='
-        query($owner:String!,$name:String!,$label:String!){
-          repository(owner:$owner,name:$name){
-            pullRequests(labels:[$label],states:OPEN,first:20,
-                         orderBy:{field:UPDATED_AT,direction:DESC}){
-              nodes{
-                number title isDraft mergeStateStatus reviewDecision
-                reviewThreads(first:100){nodes{isResolved isOutdated}}
-                commits(last:1){nodes{commit{statusCheckRollup{state}}}}
-              }}}}' --jq '
-        .data.repository.pullRequests.nodes[] | [
-          (.number|tostring),
-          (if .isDraft then "draft"
-           else (.commits.nodes[0].commit.statusCheckRollup.state // "NONE") end),
-          (.mergeStateStatus // "UNKNOWN"),
-          (([.reviewThreads.nodes[] | select((.isResolved|not) and (.isOutdated|not))] | length) as $open
-            | if $open > 0 then ($open|tostring)
-              elif .reviewDecision == "APPROVED" then "approved"
-              elif .reviewDecision == "CHANGES_REQUESTED" then "changes"
-              else "none" end),
-          (.title // "")
-        ] | @tsv' 2>/dev/null \
-        | awk -v r="$repo" 'NF { print r "\t" $0 }' > "$tmp/$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')" 2>/dev/null || :
-    ) &
+# PRS section rows, driven by local enlistment (.wtc-prs) — not a forge label
+# search. TSV: repo \t number \t checks \t merge \t review \t title \t
+# archived \t merged_on \t draft
+#
+# merged_on is "-" rather than empty when there is none: `read -r … <<< "…"`
+# with IFS=$'\t' still treats a lone tab as IFS whitespace and collapses
+# consecutive delimiters, so a genuinely empty field here would swallow the
+# trailing draft column into it. "-" is this codebase's existing placeholder
+# for "field intentionally blank" (see .wtc-prs's own format), so callers
+# already know to treat it as empty.
+#
+# OPEN and DRAFT are always included; MERGED rows stay too (wtc-status fades
+# them) until they pass 48 weekday-hours since merge, at which point archived
+# is "yes" and wtc-status collapses them behind the `a` toggle. DECLINED /
+# CLOSED / SUPERSEDED are dropped here — a worktree still sitting on that
+# branch is caught separately as an orphan, not duplicated as a PR row.
+wtc_pr_list() { # <collection> -> TSV rows, one per enlisted PR (open/draft/merged)
+  coll="$1"
+  enrich="${WTC_PR_ENRICH:-yes}"
+  _facts_py="$(wtc_pr_facts_py)"
+  wtc_pr_enlist_rows "$coll" | while IFS=$'\t' read -r repo num branch url title; do
+    [ -n "$num" ] || continue
+    if [ "$enrich" != yes ]; then
+      printf '%s\t%s\tNONE\tUNKNOWN\tnone\t%s\tno\t-\tno\n' "$repo" "$num" "$title"
+      continue
+    fi
+    tsv_from_cmd _num state checks merge review etitle mcommit merged_on -- \
+      wtc_pr_enrich "$repo" "$num" "$title" "$(wtc_repo_worktree "$coll" "$repo")"
+    archived=no
+    draft=no
+    [ "$state" = DRAFT ] && draft=yes
+    case "$state" in
+      DECLINED|CLOSED|SUPERSEDED) continue ;;
+      MERGED)
+        merge="MERGED"
+        review="merged"
+        if [ -f "$_facts_py" ] && [ -n "$merged_on" ] \
+          && python3 "$_facts_py" is-archived "$merged_on" 2>/dev/null
+        then
+          archived=yes
+        fi
+        ;;
+    esac
+    [ -n "$etitle" ] && title="$etitle"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$repo" "$num" "${checks:-NONE}" "${merge:-UNKNOWN}" "${review:-none}" \
+      "${title:--}" "$archived" "${merged_on:--}" "$draft"
   done
-  wait 2>/dev/null || true
-  cat "$tmp"/* 2>/dev/null || true
-  rm -rf "$tmp"
 }
 
-# NOTE: wtc-status derives "worktree still on a branch whose PR has gone" from
-# the per-branch PR cache it already fills, so there is no separate orphan
-# query here. Kept out deliberately rather than left as a second code path
-# that would drift from the one the table actually uses.
+# NOTE: wtc-status derives "worktree still on a branch whose PR has gone" by
+# cross-checking .wtc-prs' branch column against each worktree's current
+# branch — see prs_table in wtc-status.sh. No separate orphan query here,
+# so there is one code path rather than two that could drift apart.
