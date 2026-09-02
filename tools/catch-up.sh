@@ -78,8 +78,11 @@ pr_state_for_branch() { # <collection> <repo> <branch>
     [ "$b" = "$branch" ] || continue
     st="$(wtc_pr_enrich "$repo" "$num" "$title" "$(wtc_repo_worktree "$coll" "$repo")" \
       | awk -F'\t' '{print $2; exit}')"
+    # Empty / unknown: gh missing or view failed — do not treat as OPEN (would
+    # push) or MERGED (would prune). Keep looking / fall through.
+    [ -n "$st" ] || continue
     case "$st" in
-      OPEN|open|DRAFT|draft) printf '%s\n' "${st:-OPEN}"; return 0 ;;
+      OPEN|open|DRAFT|draft) printf '%s\n' "$st"; return 0 ;;
     esac
     [ -n "$saw" ] || saw="$st"
   done <<EOF

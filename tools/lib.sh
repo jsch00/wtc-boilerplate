@@ -884,6 +884,11 @@ wtc_prs_file() { # [collection] -> path
 wtc_pr_enlist() { # <collection> <repo> <number> [branch] [url] [title]
   coll="$1" repo="$2" num="$3" branch="${4:-}" url="${5:-}" title="${6:-}"
   [ -n "$coll" ] && [ -n "$repo" ] && [ -n "$num" ] || return 1
+  # Titles (and pasted branch/url) must not carry tabs/newlines — those would
+  # create extra columns/rows and break wtc_pr_enlist_rows / status / catch-up.
+  branch="$(printf '%s' "$branch" | tr '\t\n\r' ' ' | tr -s ' ')"
+  url="$(printf '%s' "$url" | tr '\t\n\r' ' ' | tr -s ' ')"
+  title="$(printf '%s' "$title" | tr '\t\n\r' ' ' | tr -s ' ')"
   f="$(wtc_prs_file "$coll")"
   mkdir -p "$(dirname "$f")"
   if [ ! -f "$f" ]; then
@@ -918,10 +923,12 @@ wtc_pr_unlist() { # <collection> <repo> <number>
   f="$(wtc_prs_file "$coll")"
   [ -f "$f" ] || return 0
   tmp="$f.tmp.$$"
+  # Same guard as enlist: under set -e an awk read error must not abort
+  # catch-up (callers often ignore unlist failures with || true).
   awk -v r="$repo" -v n="$num" '
     $1 == r && $2 == n { next }
     { print }
-  ' "$f" > "$tmp"
+  ' "$f" > "$tmp" 2>/dev/null || cp "$f" "$tmp"
   mv "$tmp" "$f"
   echo "unlisted $repo#$num from $f"
 }
@@ -971,8 +978,10 @@ wtc_pr_facts_py() {
 
 wtc_pr_enrich() { # <repo> <number> [fallback-title] [worktree] -> TSV line
   repo="$1" num="$2" title="${3:-}"
+  # Empty state (not OPEN): catch-up must not push or assume merged when it
+  # cannot verify PR status — missing gh / failed view is "unknown".
   command -v gh >/dev/null 2>&1 || {
-    printf '%s\tOPEN\tNONE\tUNKNOWN\tnone\t%s\t\t\n' "$num" "$title"
+    printf '%s\t\tNONE\tUNKNOWN\tnone\t%s\t\t\n' "$num" "$title"
     return 0
   }
   IFS=$'\t' read -r slug _forge <<EOF
@@ -1000,7 +1009,7 @@ EOF
     printf '%s\n' "$row"
     return 0
   fi
-  printf '%s\tOPEN\tNONE\tUNKNOWN\tnone\t%s\t\t\n' "$num" "$title"
+  printf '%s\t\tNONE\tUNKNOWN\tnone\t%s\t\t\n' "$num" "$title"
 }
 
 # Capture a command's stdout, then IFS-split one TSV line into variables.
