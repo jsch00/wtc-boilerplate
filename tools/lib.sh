@@ -440,9 +440,11 @@ herdr_agent_name() { # <session> <collection>
 resolve_agent_name() { # <collection-dir> <session> <collection-name>
   _computed="$(herdr_agent_name "$2" "$3")"
   _from_env=""
-  if [ -f "$1/.env.collection" ]; then
-    _from_env="$(sed -n 's/^WTC_AGENT_NAME=//p' "$1/.env.collection" | head -n1 | tr -d '[:space:]')"
-  fi
+  for _envf in "$1/.env.collection" "$1/.env.collection.local"; do
+    [ -f "$_envf" ] || continue
+    _v="$(sed -n 's/^WTC_AGENT_NAME=//p' "$_envf" | head -n1 | tr -d '[:space:]')"
+    [ -n "$_v" ] && _from_env="$_v"
+  done
   if [ -n "$_from_env" ] && [ "$_from_env" = "$_computed" ]; then
     printf '%s\n' "$_from_env"
   else
