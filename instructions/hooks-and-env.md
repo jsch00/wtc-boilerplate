@@ -84,6 +84,58 @@ source it in the shell/IDE run configuration.
 Port offsets live in `.harness-repos.yml` (`port_offset:`); keep them unique
 and stable — they are the contract between repos.
 
+## Agent shells and PATH
+
+Agent CLIs spawn non-login shells. They do not run `mise activate`, so
+`/usr/bin/env ruby` on a shebang (`bin/rails`, `bin/rake`) falls through to
+macOS system Ruby 2.6, and `mise exec` from the **collection root** uses the
+global pin rather than a sibling's. That is not an untrusted `mise.toml` and
+not a reason to prepend `mise where ruby` by hand.
+
+The harness injects the union of each sibling's `mise bin-paths` so every
+agent shell command sees repo-pinned tools on PATH, independent of cwd:
+
+| Surface | What it does |
+|---|---|
+| `tools/agent-env.sh` | trusts sibling `mise.toml` files, caches bins as `.env.toolchain`, prints `export PATH=…` |
+| `hooks/agent-env.json` | SessionStart refreshes the cache; PreToolUse wraps `Bash` / `run_terminal_command` with `eval "$(agent-env.sh)"` |
+| collection-root `.envrc` | Grok `load_envrc` (and direnv) prepend PATH without needing project hook trust |
+| `wtc-open.sh` | new herdr workspaces get `WTC_TOOLCHAIN_PATH` and `BASH_ENV` at create time |
+
+### Why none of these sets PATH directly
+
+Anything that sets `PATH` *before* a login shell starts loses on macOS.
+`/etc/zprofile` and `/etc/profile` run `path_helper`, which rebuilds `PATH`
+from `/etc/paths` and `/etc/paths.d` and appends whatever was already there —
+so an injected prefix comes out **below** `/usr/bin`, and `ruby` resolves to
+system 2.6. Measured: a prefix passed at position 1 lands at position 18, with
+`/usr/bin` at 6. An injection done that way achieves the exact opposite of its
+purpose, silently.
+
+So the harness passes `WTC_TOOLCHAIN_PATH` — an ordinary variable `path_helper`
+does not touch — and every surface that turns it into a `PATH` runs *after* the
+profile:
+
+* `BASH_ENV` — bash sources it for every **non-interactive** shell, which is
+  precisely what an agent CLI spawns. `agent-env.sh` detects being sourced and
+  applies to the calling shell silently. This is the surface that needs no hook
+  trust and no per-CLI config.
+* the PreToolUse hook — wraps the agent's own tool calls.
+* `.envrc` — direnv and Grok `load_envrc`.
+
+Interactive human panes never needed this: a login shell that runs `mise
+activate` from `.zshrc` already resolves per-directory pins correctly. The
+problem was only ever the non-login shells agents spawn.
+
+`link-skills.sh` installs the hook JSON at `.grok/hooks/`, `.claude/settings.json`,
+and `.cursor/hooks.json` (symlinks; a real file there is left as a local
+override) and regenerates `.envrc` / `.env.toolchain`. Catch-up re-runs it.
+Grok skips project hooks until `/hooks-trust`; `.envrc` and herdr PATH still
+apply.
+
+`mise exec` remains correct **inside a sibling**. It is not required to dodge
+system interpreters once PATH is injected.
+
 ## Optional mise extras (never required)
 
 - Repos may pin toolchains in their `mise.toml` (`[tools]` — node, python,

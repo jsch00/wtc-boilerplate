@@ -183,7 +183,10 @@ harness/tools/link-skills.sh
 ```
 
 Picks up `wtc-*` skills added to the harness since the collection was created
-and prunes ones removed since. Also idempotent.
+and prunes ones removed since. Also installs agent toolchain hooks
+(`.grok/hooks`, `.claude/settings.json`, `.cursor/hooks.json`) and refreshes
+`.env.toolchain` so agent shells keep sibling toolchains on PATH. Also
+idempotent.
 
 Order matters here: this links whatever **this collection's** `harness/`
 worktree has in git, so it must run *after* step 2 moved that worktree. If it

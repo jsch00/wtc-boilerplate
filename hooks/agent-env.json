@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "harness/hooks/invoke.sh --write",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|run_terminal_command|Shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "harness/hooks/invoke.sh --wrap",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -12,8 +12,9 @@ Usage:
 Opens each collection as one workspace in the workspace root's herdr session:
 a single tab at the collection root, default panes agent / browse / shell /
 status, all carrying the collection env (.env.collection, then
-.env.collection.local) — so no mise or shell activation is needed for ports
-and collection-scoped secrets to resolve.
+.env.collection.local) and the sibling toolchain prefix (.env.toolchain) —
+so no mise or shell activation is needed for ports, collection-scoped
+secrets, or repo-pinned tools to resolve.
 
 With no <collection>, opens the collection containing this harness worktree.
 Re-running is safe: an existing workspace with that label is reused, never
@@ -230,9 +231,9 @@ open_collection() { # <collection>
       echo "==> $name: no workspace — would create one: agent, browse, shell, status"
       return 0
     fi
-    # Collection env into both panes, so ports and collection-scoped secrets
-    # resolve without mise. Local last so it wins on a conflicting key, same
-    # order as mise.toml's _.file list.
+    # Collection env into the workspace, so ports, collection-scoped secrets,
+    # and sibling toolchain bins resolve without mise activate. Local last so
+    # it wins on a conflicting key, same order as mise.toml's _.file list.
     set -- create --cwd "$dir" --label "$name" --no-focus
     for envf in "$dir/.env.collection" "$dir/.env.collection.local"; do
       [ -f "$envf" ] || continue
@@ -241,6 +242,30 @@ open_collection() { # <collection>
         set -- "$@" --env "$kv"
       done < "$envf"
     done
+    if [ -x "$dir/harness/tools/agent-env.sh" ]; then
+      "$dir/harness/tools/agent-env.sh" --write >/dev/null 2>&1 || true
+    fi
+    _tp=""
+    if [ -f "$dir/.env.toolchain" ]; then
+      _tp="$(sed -n 's/^WTC_TOOLCHAIN_PATH=//p' "$dir/.env.toolchain" | head -n1)"
+    fi
+    if [ -n "$_tp" ]; then
+      # Pass the prefix, not a PATH. herdr sets these before the pane's shell
+      # runs, and on macOS /etc/zprofile's path_helper then rebuilds PATH with
+      # the system paths first — an injected prefix lands *below* /usr/bin, so
+      # `ruby` resolves to system 2.6 and the injection silently achieves the
+      # opposite of its purpose. Verified: prefix passed at position 1 comes
+      # out at position 18, /usr/bin at 6.
+      #
+      # WTC_TOOLCHAIN_PATH is an ordinary variable, so path_helper leaves it
+      # alone, and the surfaces that apply it all run *after* the profile:
+      # BASH_ENV for the non-interactive shells agent CLIs spawn, the
+      # PreToolUse hook for their tool calls, `.envrc` for direnv/Grok.
+      set -- "$@" --env "WTC_TOOLCHAIN_PATH=$_tp"
+      if [ -x "$dir/harness/tools/agent-env.sh" ]; then
+        set -- "$@" --env "BASH_ENV=$dir/harness/tools/agent-env.sh"
+      fi
+    fi
 
     ws_out="$(herdr --session "$session" workspace "$@")"
     ws_id="$(printf '%s' "$ws_out" | tr '{}' '\n\n' | sed -n 's/.*"workspace_id":"\([^"]*\)".*/\1/p' | head -n1)"
