@@ -314,9 +314,9 @@ open_collection() { # <collection>
   if [ "$start_agent" = no ]; then
     note "agent skipped"
   else
+    # shellcheck disable=SC2086  # state_label takes the split words on purpose
     case "${st%% *}" in
       missing) note "agent no pane" ;;
-      # shellcheck disable=SC2086
       agent)   note "agent live ($(state_label $st))" ;;
       running) note "agent busy (${st#running }) — left alone" ;;
       *)
