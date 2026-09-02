@@ -291,6 +291,22 @@ slug_for_worktree() { # <worktree> [repo-name] -> owner/repo
   printf '%s\n' "${slug%.git}"
 }
 
+# owner/repo out of a github remote URL, ssh or https. Empty for anything
+# else, which is the caller's signal to skip that remote rather than guess.
+github_slug_from_url() { # <url> -> owner/repo, or empty
+  case "${1:-}" in *github.com[:/]*) ;; *) return 0 ;; esac
+  _s="${1#*github.com}"; _s="${_s#:}"; _s="${_s#/}"
+  printf '%s\n' "${_s%.git}"
+}
+
+# The repo a sibling contributes *to*, when that is not the repo it pushes to.
+# A fork checkout has both: origin is your copy, upstream is the one the PR is
+# opened against, and everything user-facing about that PR — its number, its
+# checks, the URL a click should open — lives on the upstream, not on origin.
+upstream_slug_for_worktree() { # <worktree> -> owner/repo, or empty
+  github_slug_from_url "$(git -C "$1" remote get-url upstream 2>/dev/null || true)"
+}
+
 # github | unknown — this implementation talks to GitHub (gh) and nothing else.
 # Kept as its own function anyway so every caller reads the same either way,
 # and so a second forge is one case to add here rather than a grep across the
