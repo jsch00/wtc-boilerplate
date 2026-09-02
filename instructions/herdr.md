@@ -44,7 +44,7 @@ restarted, resuming its conversation:
 
 ```bash
 cd <collection>
-claude --remote-control <session>--<collection> --dangerously-skip-permissions --continue
+claude --remote-control "$WTC_AGENT_NAME" --dangerously-skip-permissions --continue
 ```
 
 `--no-remote-control` opts out for one open; passing `--agent-args` replaces the
@@ -178,14 +178,18 @@ record of one machine's directory layout.
 
 ### Agent names
 
-An agent is named **`<session>--<collection>`** — `wtc--billing-api`. herdr
-caps names at 32 characters (`[a-z][a-z0-9_-]{0,31}`, unique among live
+An agent is named **`<session>--<collection>`** — `wtc--billing-api`. That
+string is emitted as `WTC_AGENT_NAME` in `.env.collection` (and injected into
+every pane); `wtc-open` starts with `herdr agent start "$WTC_AGENT_NAME" …`,
+so the command shape is the same across collections and only the env differs.
+herdr caps names at 32 characters (`[a-z][a-z0-9_-]{0,31}`, unique among live
 agents); past that the collection half is trimmed and the session prefix
 stays, because the prefix is what keeps two sessions on one machine from
 colliding. A collection named for a GitHub issue (`239-timeline-…`) is fine:
 the session half starts with a letter, and if the session itself does not it
-gets a `w` prefix. One string then reads the same in `herdr agent list`, in
-Claude's Remote Control list, and on the phone.
+gets a `w` prefix. One string then reads the same in the collection env, in
+`herdr agent list`, in Claude's Remote Control list, and on the phone.
+`--session` overrides recompute the name when it would no longer match.
 
 Commands that address a running agent (`agent prompt`, `agent wait`) take a
 name **or a pane id** — prefer the pane id. A name only exists while the agent

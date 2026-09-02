@@ -223,7 +223,8 @@ open_collection() { # <collection>
   dir="$ROOT/$name"
   [ -d "$dir/harness" ] || { echo "skip: $name is not a collection (no harness/)" >&2; return 0; }
   report="" settle=0
-  agent_name="$(herdr_agent_name "$session" "$name")"
+  # Same WTC_AGENT_NAME the pane env carries (from .env.collection).
+  WTC_AGENT_NAME="$(resolve_agent_name "$dir" "$session" "$name")"
 
   ws_id="$(herdr_ws_id "$session" "$name")"
   if [ -z "$ws_id" ]; then
@@ -418,13 +419,14 @@ open_collection() { # <collection>
 start_agent_in_pane() {
   this_agent_args="$agent_args"
   if [ "$remote_control" = yes ] && [ "$agent_args_set" = no ] && [ "$agent_kind" = claude ]; then
-    this_agent_args="$this_agent_args --remote-control $agent_name"
+    this_agent_args="$this_agent_args --remote-control $WTC_AGENT_NAME"
   fi
 
   # Agent names: [a-z][a-z0-9_-]{0,31}, unique among live agents.
+  # Name comes from WTC_AGENT_NAME (collection env); kind/args from wtc.env.
   # Intentional word-splitting: $agent_args is a flag string, not a path.
   # shellcheck disable=SC2086
-  set -- start "$agent_name" --kind "$agent_kind" --pane "$agent_pane"
+  set -- start "$WTC_AGENT_NAME" --kind "$agent_kind" --pane "$agent_pane"
   if [ -n "$this_agent_args" ]; then
     set -- "$@" -- $this_agent_args
   fi

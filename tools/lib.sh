@@ -421,9 +421,10 @@ herdr_ws_id() { # <session> <label> -> workspace id, or empty
 # name follows the pane occupant until that agent exits. Compose them as
 # <session>--<collection> so one string says which session and which wtc — the
 # same name herdr answers to, Claude Remote Control registers, and the phone
-# lists. Past 32 characters the collection half is trimmed rather than the
-# session prefix: the prefix is what keeps names from colliding across
-# sessions on one machine.
+# lists. write_collection_env emits that string as WTC_AGENT_NAME so panes and
+# wtc-open share one value. Past 32 characters the collection half is trimmed
+# rather than the session prefix: the prefix is what keeps names from
+# colliding across sessions on one machine.
 herdr_agent_name() { # <session> <collection>
   _s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
   _c="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
@@ -439,6 +440,24 @@ herdr_agent_name() { # <session> <collection>
     return 0
   fi
   printf '%s--%s\n' "$_s" "$(printf '%s' "$_c" | cut -c1-"$_room")"
+}
+
+# Prefer WTC_AGENT_NAME from .env.collection (same string injected into panes)
+# when it matches the live session+collection composition; otherwise recompute
+# (missing/stale file, or wtc-open --session override).
+resolve_agent_name() { # <collection-dir> <session> <collection-name>
+  _computed="$(herdr_agent_name "$2" "$3")"
+  _from_env=""
+  for _envf in "$1/.env.collection" "$1/.env.collection.local"; do
+    [ -f "$_envf" ] || continue
+    _v="$(sed -n 's/^WTC_AGENT_NAME=//p' "$_envf" | head -n1 | tr -d '[:space:]')"
+    [ -n "$_v" ] && _from_env="$_v"
+  done
+  if [ -n "$_from_env" ] && [ "$_from_env" = "$_computed" ]; then
+    printf '%s\n' "$_from_env"
+  else
+    printf '%s\n' "$_computed"
+  fi
 }
 
 herdr_pane_id_by_label() { # <session> <workspace> <pane-label> -> pane id, or empty
@@ -688,6 +707,8 @@ write_collection_env() { # <collection-dir> <collection-name>
     echo "# Ports cover every registry repo with a port_offset, whether or not"
     echo "# it is checked out here, so absent repos still resolve to a port."
     echo "WTC_COLLECTION=$name"
+    # Same string wtc-open passes to `herdr agent start` / Claude --remote-control.
+    printf 'WTC_AGENT_NAME=%s\n' "$(herdr_agent_name "$(herdr_session_name)" "$name")"
     echo "WTC_CONFIG_ROOT=$cfg_root"
     echo "COLLECTION_PORT_BASE=$base"
     for repo in $(registry_all_names); do
