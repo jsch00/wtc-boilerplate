@@ -11,9 +11,20 @@ what it is checked out on. Catch-up is also not git-only — files and skills
 that reached the harness or the control root after this collection was created
 never arrive on their own.
 
-Safe by construction: nothing here rewrites history, force-pushes, or
-touches a dirty tree. The only writes are fast-forwards, re-detaching, and
-merging a base forward — none of which can lose or reorder a commit.
+Prefer `tools/catch-up.sh`: it does everything in this file in one pass, per
+collection or `--all`, and is what the rest of this skill documents.
+
+```bash
+harness/tools/catch-up.sh                 # this collection
+harness/tools/catch-up.sh --all           # every collection under the workspace root
+harness/tools/catch-up.sh --dry-run       # report only; touch nothing
+```
+
+Safe by construction: nothing here rewrites history or force-pushes. Dirty
+trees are **not** skipped — a worktree that actually has a move to make is
+stashed (including untracked files) around it, then the stash is popped. A
+worktree that is already current is left alone regardless of dirty state,
+since there is nothing to move it past.
 
 ## 1. Fetch every owner
 
@@ -42,7 +53,36 @@ for wt in <collection>/*/; do
 done
 ```
 
-## 2. Move each worktree, by what it is
+## 2. Where "merged" comes from: `.wtc-prs`, then `gh`
+
+Whether a branch's PR has merged decides which row of the table below
+applies, and that check reads this collection's **local PR enlistment**
+first — not a `wtc:<label>` search on GitHub:
+
+```bash
+harness/tools/wtc-pr.sh list
+```
+
+A branch enlisted there is asked about directly
+(`gh pr view --repo <slug> <n> --json state,isDraft,title`); an OPEN or DRAFT
+state anywhere in the enlistment wins over anything else recorded, since a
+worktree with two enlisted numbers on the same branch is rare and "still
+live" is the safer read. A **merged** enlistment is pruned from `.wtc-prs`
+once the worktree is returned to the tip (§2.1) — the file only ever lists
+work still in flight.
+
+A branch with **no enlistment** (never enlisted, or the enlistment predates
+the PR) falls back to asking GitHub for that one branch, in every state:
+
+```bash
+gh pr list --repo <slug> --head <branch> --state all --json state --jq '.[0].state'
+```
+
+That fallback is what catches a PR that merged without ever being enlisted —
+the branch would otherwise look "still live" forever, since nothing else
+records that its PR is gone.
+
+## 3. Move each worktree, by what it is
 
 The resting state of a worktree is **detached at the development tip**, not a
 branch (`harness/instructions/development-workflows.md`). Catch-up's job is to
@@ -55,34 +95,33 @@ For every worktree:
 git -C <worktree> status --short                       # clean?
 git -C <worktree> symbolic-ref -q HEAD || echo detached
 git -C <worktree> rev-list --count HEAD..<default_ref>  # how stale
-gh pr view --json state,url 2>/dev/null                # only if on a branch
 ```
 
 `<default_ref>` per repo is in `harness/.harness-repos.yml` (`origin/main` or
-`origin/develop`).
+another working branch, if the registry names one).
 
 | The worktree is | Do |
 |---|---|
-| **Detached** and clean | `git -C <wt> checkout --detach <default_ref>` — move it to the new tip. Always safe: no branch to move, nothing to conflict. |
-| **Detached** and dirty | Nothing. Report it — someone is mid-edit with no branch yet. |
-| On a branch, **PR merged**, clean, nothing outside the base | §2.1 — return to tip, prune the local ref. |
-| On a branch, **PR merged**, but dirty or with post-merge commits | §2.2 — that is follow-up work; give it a branch of its own first. |
-| On a **live** branch (no PR, or PR open) and clean | §2.3 — merge the base in, so the branch does not drift; §2.3.1 pushes it when a PR is open. |
-| On a **live** branch and dirty | Nothing. Report ahead/behind — never merge into a dirty tree. |
+| **Detached**, behind the tip | Stash if dirty (incl. untracked); `git -C <wt> checkout --detach <ref>`; pop the stash. |
+| **Detached**, already at the tip | Nothing — there is no move to make, dirty or not. |
+| On a branch, **PR merged** (§2), clean, nothing beyond the base | §3.1 — return to tip, prune the local ref, unlist. |
+| On a branch, **PR merged**, but dirty or with post-merge commits | §3.2 — that is follow-up work; give it a branch of its own first. |
+| On a **live** branch (no PR, or PR open/draft), behind the tip | §3.3 — merge the tip in; §3.3.1 pushes it when a PR exists. |
+| On a **live** branch, already current | Nothing. |
 | Mid-merge / mid-rebase / mid-cherry-pick | Nothing. Report it — someone is in the middle of something. |
 | On a repo's default **branch** (legacy shape) | `git -C <wt> merge --ff-only @{u}` if clean, and suggest detaching so the branch stops being pinned to this collection. |
 
-**Never rebase, never force-push, never touch a dirty tree.** Merging a base
-forward either fast-forwards or creates a merge commit; rebasing a live branch
-would rewrite the per-issue record, which is the one thing catch-up must not do.
+**Never rebase, never force-push.** Merging a base forward either
+fast-forwards or creates a merge commit; rebasing a live branch would rewrite
+the per-issue record, which is the one thing catch-up must not do.
 
-### 2.1 A merged branch: back to the tip, prune the local ref
+### 3.1 A merged branch: back to the tip, prune the local ref
 
 ```bash
-gh pr view --json state -q .state          # MERGED?
 git -C <wt> rev-list --count <default_ref>..HEAD   # must be 0
 git -C <wt> checkout --detach <default_ref>
 git -C <wt> branch -d <branch>
+harness/tools/wtc-pr.sh unlist <repo> <n>           # if it was enlisted
 ```
 
 `git branch -d` (never `-D`) is the safety net: it refuses to delete anything
@@ -94,7 +133,7 @@ The **remote** branch stays. It is the per-issue record, and
 `git branch -r | grep <issue-id>` is how anyone finds what was done for an issue
 later. Never delete it, and leave GitHub's "Delete branch on merge" off.
 
-### 2.2 Carrying work off a merged branch
+### 3.2 Carrying work off a merged branch
 
 Uncommitted changes, or commits made after the merge, are follow-up work that
 never belonged on a finished branch:
@@ -113,14 +152,14 @@ conflict; if git refuses, leave the worktree alone and report it. Pick a
 follow-up name that says what the work is — and say in your report that you
 renamed it, since nobody asked you to name anything.
 
-### 2.3 A live branch: merge the base forward
+### 3.3 A live branch: merge the base forward
 
 A branch that is still being worked on drifts from its base every time
 something lands. Left alone it drifts until the next PR is a conflict
 resolution rather than a review, so catch-up brings the base to it:
 
 ```bash
-git -C <wt> status --porcelain            # must be empty
+git -C <wt> status --porcelain            # must be empty (or stashed)
 git -C <wt> merge --no-edit <default_ref>
 ```
 
@@ -137,15 +176,14 @@ git -C <wt> merge --abort
 
 Then report the conflicting paths and let the user decide.
 
-### 2.3.1 If the branch has an open PR, push the merge
+### 3.3.1 If the branch has a PR (open or draft), push the merge
 
-A branch with an open PR is already public, and a merge that sits unpushed
-leaves reviewers reading the change against a base nobody is on any more. That
-is the stale-base review round this whole section exists to prevent, so do not
-be hesitant here — push it:
+A branch with a PR is already public, and a merge that sits unpushed leaves
+reviewers (or CI, for a draft) reading the change against a base nobody is on
+any more. That is the stale-base review round this whole section exists to
+prevent, so do not be hesitant here — push it:
 
 ```bash
-gh pr view --json state -q .state          # OPEN?
 git -C <wt> push
 ```
 
@@ -160,21 +198,7 @@ report rather than reaching for `--force`; someone else may be pushing to the
 same branch.
 
 A branch with **no PR yet** is a different case: leave the merge local. Its
-first push is `wtc-pr`'s, together with opening the PR.
-
-## 3. Re-link machine-local secrets
-
-```bash
-harness/tools/link-secrets.sh
-```
-
-Idempotent, and re-running is the point: init hooks ran at worktree creation
-only, so a control-root file added since then has never reached this
-collection.
-
-A **nonzero exit means it refused a target that is not gitignored** — that is
-not a catch-up failure to shrug at. Add the ignore rule in the offending repo
-first, then re-run. Never link a secret into a path git would offer to commit.
+first push is `wtc-pr`'s (or `wtc-draft-pr`'s), together with opening the PR.
 
 ## 4. Re-link the harness skills
 
@@ -185,16 +209,15 @@ harness/tools/link-skills.sh
 Picks up `wtc-*` skills added to the harness since the collection was created
 and prunes ones removed since. Also installs agent toolchain hooks
 (`.grok/hooks`, `.claude/settings.json`, `.cursor/hooks.json`) and refreshes
-`.env.toolchain` so agent shells keep sibling toolchains on PATH. Also
-idempotent.
+`.env.toolchain` so agent shells keep sibling toolchains on PATH. Idempotent.
 
 Order matters here: this links whatever **this collection's** `harness/`
-worktree has in git, so it must run *after* step 2 moved that worktree. If it
+worktree has in git, so it must run *after* §3 moved that worktree. If it
 reports `(none)`, the harness worktree is behind rather than the tool being
 broken. To roll a newly landed skill out across every collection at once —
 each of which must be caught up first — `harness/tools/link-skills.sh --all`.
 
-## 4.1 Re-render the MCP servers
+## 5. Re-render the MCP servers
 
 ```bash
 harness/tools/link-mcp.sh
@@ -213,7 +236,7 @@ failure — the config is correct and the credential is missing. Fix it where
 the variable belongs (`instructions/secrets.md`), not by editing the rendered
 file, which is overwritten on the next run.
 
-## 4.5 Refresh the collection env
+## 6. Refresh the collection env
 
 ```bash
 harness/tools/refresh-env.sh
@@ -226,7 +249,7 @@ repo, `GH_CONFIG_DIR` — reaches new collections only, and every older
 collection stays stale indefinitely. This is the missing half.
 
 Same ordering rule as the skills above: it runs **this collection's**
-`harness/` generator, so it must come *after* step 2 moved that worktree.
+`harness/` generator, so it must come *after* §3 moved that worktree.
 
 It preserves the collection's port base, so ports do not move, and leaves
 `.env.collection.local` alone. It regenerates `.env.collection` wholesale,
@@ -239,27 +262,43 @@ env at workspace *creation* and skips that block when reusing an open
 workspace, so a pane keeps whatever it started with. Close and reopen the
 workspace, or export by hand in the pane.
 
-## 4.6 Ambient CLI credentials — ask, once, and only when it is new
+## 7. Re-link machine-local secrets
 
-`gh`, `twg` and `jira` each resolve one credential store per machine, so by
-default every project on the machine shares whichever account is logged in.
-The harness can give this workspace its own store instead, opt-in by presence
+```bash
+harness/tools/link-secrets.sh
+```
+
+Idempotent, and re-running is the point: init hooks ran at worktree creation
+only, so a control-root file added since then has never reached this
+collection. Last in the hook order — a repo's `.env.collection` and skills are
+in place by the time this runs, so a secret that a hook needs on next launch
+is already linked when that hook fires.
+
+A **nonzero exit means it refused a target that is not gitignored** — that is
+not a catch-up failure to shrug at. Add the ignore rule in the offending repo
+first, then re-run. Never link a secret into a path git would offer to commit.
+
+### 7.1 Ambient CLI credentials — ask, once, and only when it is new
+
+`gh` and `jira` each resolve one credential store per machine, so by default
+every project on the machine shares whichever account is logged in. The
+harness can give this workspace its own store instead, opt-in by presence
 (`harness/instructions/secrets.md` → Tool identity).
 
-Catch-up is when a workspace usually *discovers* this option, because the
-generator learned to emit those variables in a version newer than the
-collection. So check whether the choice has been made:
+Catch-up is when a workspace usually *discovers* this option, because §6 just
+regenerated `.env.collection` against whatever the generator currently knows.
+So check whether the choice has been made:
 
 ```bash
 ls -d "${WTC_CONFIG_ROOT:-$HOME/.config/wtc}"/gh 2>/dev/null   # opted in?
 grep -c GH_CONFIG_DIR .env.collection 2>/dev/null              # in effect here?
 ```
 
-- **Store exists** → nothing to ask. §4.5 already emitted the variables.
+- **Store exists** → nothing to ask. §6 already emitted the variables.
 - **Store absent, and the collection is otherwise up to date** → nothing to
   ask either. Do not raise it on every catch-up; a workspace that has said no
   once should not be asked again.
-- **Store absent, and §4.5 just moved this collection onto a generator that
+- **Store absent, and §6 just moved this collection onto a generator that
   understands tool identity** → this is the one moment worth a question. Ask
   the user how they want ambient CLI creds handled, and offer the two answers
   plainly:
@@ -274,9 +313,9 @@ being asked.** Creating it *is* the opt-in, and turning it on logs them out
 inside every collection until they re-auth — a surprise no catch-up should
 spring on someone. Report the choice offered and the answer taken.
 
-## 5. Local refs left over from earlier work
+## 8. Local refs left over from earlier work
 
-§2.1 prunes the branch of the worktree it moved. Other local branches in the
+§3.1 prunes the branch of the worktree it moved. Other local branches in the
 same repo may also be finished — merged, with no worktree on them:
 
 ```bash
@@ -288,28 +327,29 @@ genuinely merged. **The remote is never touched.** A local ref costs nothing
 to keep, so when in doubt leave it; the point of pruning is that a worktree
 stops sitting on dead work, not tidiness for its own sake.
 
-## 6. Report
+## 9. Report
 
 Per repo: where the HEAD is now (tip or branch), whether it moved and why,
 ahead/behind counts, and tree state. Call out explicitly anything you
-**deleted or renamed** — a pruned local ref or a follow-up branch — even
-though both are recoverable, because neither was asked for.
+**deleted, renamed, or unlisted** — a pruned local ref, a follow-up branch, a
+`.wtc-prs` row removed — even though all are recoverable, because none was
+asked for.
 
-Then, in one line: anything that needs a human — dirty trees, a merge that
-aborted on conflicts, a refused secret link, a `branch -d` that refused, a
-repo mid-rebase.
+Then, in one line: anything that needs a human — dirty trees that could not be
+moved, a merge that aborted on conflicts, a refused secret link, a
+`branch -d` that refused, a repo mid-rebase.
 
-For every live branch you merged into (§2.3), say so, and name the PR you
-pushed the merge to — its checks are now rerunning because of you. For a
-branch with no PR, give the unpushed count instead. A merge that aborted on
-conflicts is the first thing a human needs to see.
+For every live branch you merged into (§3.3), say so, and name the PR you
+pushed the merge to (§3.3.1) — its checks are now rerunning because of you.
+For a branch with no PR, give the unpushed count instead. A merge that
+aborted on conflicts is the first thing a human needs to see.
 
-If §4.5 changed `.env.collection`, say which variables moved — a port that
+If §6 changed `.env.collection`, say which variables moved — a port that
 shifted or a tool-identity variable that appeared changes what an already-open
-herdr pane is running with, and only a reopened workspace picks it up. If §4.6
+herdr pane is running with, and only a reopened workspace picks it up. If §7.1
 asked about ambient credentials, report the question and the answer; if it did
 not ask, say nothing about it.
 
 ---
-Canon: `harness/AGENTS.md` → Catch-up rules,
+Canon: `harness/instructions/development-workflows.md`,
 `harness/instructions/secrets.md`, `harness/instructions/skills.md`.

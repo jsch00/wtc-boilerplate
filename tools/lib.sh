@@ -119,7 +119,12 @@ owner_of() { # <worktree> -> absolute git common dir, or empty
 }
 
 default_ref_for() { # <repo-name> -> default_ref from registry (fallback origin/main)
-  ref="$(registry_field "$1" default_ref)"
+  repo="$1"
+  # "harness" is the directory name, not the registry name — a caller that
+  # knows the collection shape but not this fork's registry (a skill doc, a
+  # hand-typed `tools/wtc-pr.sh enlist harness …`) can still pass it.
+  if [ "$repo" = harness ]; then repo="$(harness_repo)"; fi
+  ref="$(registry_field "$repo" default_ref)"
   [ -n "$ref" ] || ref="origin/main"
   printf '%s\n' "$ref"
 }
@@ -286,6 +291,43 @@ slug_for_worktree() { # <worktree> [repo-name] -> owner/repo
   printf '%s\n' "${slug%.git}"
 }
 
+# github | unknown — this workspace is GitHub-only (gh), unlike Steep's harness
+# which also carries Bitbucket. Kept as its own function anyway so callers
+# read the same either way, and a bitbucket case is one line to add if this
+# fork ever needs it.
+forge_for_repo() { # <repo-name> -> github | unknown, from the registry remote
+  case "$(registry_field "$1" remote)" in
+    *github.com*) printf 'github\n' ;;
+    *)            printf 'unknown\n' ;;
+  esac
+}
+
+forge_for_slug() { # <owner/repo> -> github (the only forge this fork talks to)
+  printf 'github\n'
+}
+
+# Slug and forge for a repo that may not be in the registry — an `ext.`
+# sibling has no registry entry, but its worktree knows its own remote.
+# Without this, an unregistered repo's PR lookups (wtc-pr enlist's default
+# URL, catch-up's PR-state check) silently returned nothing.
+repo_slug_and_forge() { # <repo> [worktree] -> "<slug>\tgithub"
+  _slug="$(repo_slug_for "$1")"
+  if [ -z "$_slug" ] && [ -n "${2:-}" ]; then
+    _slug="$(slug_for_worktree "$2" "$1")"
+  fi
+  [ -n "$_slug" ] || _slug="$1"
+  printf '%s\tgithub\n' "$_slug"
+}
+
+# One place that knows what a pull request's web address looks like.
+pr_url_for() { # <slug> <forge> <number> -> URL, or empty
+  [ -n "$1" ] && [ -n "$3" ] || return 0
+  case "$2" in
+    bitbucket) printf 'https://bitbucket.org/%s/pull-requests/%s\n' "$1" "$3" ;;
+    *)         printf 'https://github.com/%s/pull/%s\n' "$1" "$3" ;;
+  esac
+}
+
 repo_for_issue_prefix() { # <prefix incl. trailing dash> -> repo name owning it
   awk -v pfx="$1" '
     $1 == "-" && $2 == "name:"          { cur = $3 }
@@ -327,6 +369,18 @@ this_collection_dir() {
 
 this_collection() {
   basename "$(this_collection_dir)"
+}
+
+# A repo's worktree path inside a collection. Trivial except for the harness
+# itself, whose directory is always named `harness/` regardless of what the
+# registry (or `WTC_HARNESS_REPO`) calls the repo behind it.
+wtc_repo_worktree() { # <collection> <repo> -> path (may not exist)
+  coll="$1" repo="$2"
+  if [ "$repo" = "$(harness_repo)" ] || [ "$repo" = harness ]; then
+    printf '%s/%s/harness\n' "$ROOT" "$coll"
+  else
+    printf '%s/%s/%s\n' "$ROOT" "$coll" "$repo"
+  fi
 }
 
 # Machine-wide tool defaults, in the control root next to the secrets:
@@ -806,12 +860,141 @@ EOF
   echo "wrote $dir/.env.collection (port base $base) + $dir/mise.toml + $dir/.env.collection.local"
 }
 
-# --- collection PR label ----------------------------------------------------
-# Which collection launched a PR is a fact worth keeping, and keeping it on the
-# PR rather than in a local file is what makes it survive the worktree going
-# back to the tip, the collection being retired, or the work moving machines.
-# A label is the cheapest durable place: one server-side filter answers "what
-# is this collection carrying" without any local bookkeeping to go stale.
+# --- local PR enlistment (.wtc-prs) -----------------------------------------
+# Local PR enlistment — preferred source of truth for "which PRs belong to
+# this wtc". Not a forge label / forge search. Lives at <collection>/.wtc-prs
+# (disposable; `retire.sh` removes it). A label survives a retired collection;
+# a local file is scoped to the collection that is actually doing the work and
+# needs no server-side filter, no `wtc:<label>` naming convention per repo,
+# and no round trip per repo just to answer "what PRs does this wtc have open".
+#
+# Line format (whitespace-separated; # comments and blank lines ignored):
+#   <repo> <number> [<branch>] [<url>] [<title…>]
+#
+# Example:
+#   agent-harness 42 catch-up-and-prs https://github.com/…/pull/42 Add catch-up
+
+wtc_prs_file() { # [collection] -> path
+  coll="${1:-}"
+  [ -n "$coll" ] || coll="${WTC_COLLECTION:-}"
+  [ -n "$coll" ] || coll="$(this_collection)"
+  printf '%s/%s/.wtc-prs\n' "$ROOT" "$coll"
+}
+
+wtc_pr_enlist() { # <collection> <repo> <number> [branch] [url] [title]
+  coll="$1" repo="$2" num="$3" branch="${4:-}" url="${5:-}" title="${6:-}"
+  [ -n "$coll" ] && [ -n "$repo" ] && [ -n "$num" ] || return 1
+  f="$(wtc_prs_file "$coll")"
+  mkdir -p "$(dirname "$f")"
+  if [ ! -f "$f" ]; then
+    cat > "$f" <<'EOF'
+# Local PR enlistment for this collection (not committed; dies with retire).
+# Format: repo  number  [branch]  [url]  [title…]
+# Manage: tools/wtc-pr.sh enlist|unlist|list
+EOF
+  fi
+  # Replace existing line for same repo+number.
+  tmp="$f.tmp.$$"
+  awk -v r="$repo" -v n="$num" '
+    $1 == r && $2 == n { next }
+    { print }
+  ' "$f" > "$tmp" 2>/dev/null || cp "$f" "$tmp"
+  # title may contain spaces — append as remainder
+  if [ -n "$title" ]; then
+    printf '%s %s %s %s %s\n' "$repo" "$num" "${branch:--}" "${url:--}" "$title" >> "$tmp"
+  elif [ -n "$url" ]; then
+    printf '%s %s %s %s\n' "$repo" "$num" "${branch:--}" "$url" >> "$tmp"
+  elif [ -n "$branch" ]; then
+    printf '%s %s %s\n' "$repo" "$num" "$branch" >> "$tmp"
+  else
+    printf '%s %s\n' "$repo" "$num" >> "$tmp"
+  fi
+  mv "$tmp" "$f"
+  echo "enlisted $repo#$num in $f"
+}
+
+wtc_pr_unlist() { # <collection> <repo> <number>
+  coll="$1" repo="$2" num="$3"
+  f="$(wtc_prs_file "$coll")"
+  [ -f "$f" ] || return 0
+  tmp="$f.tmp.$$"
+  awk -v r="$repo" -v n="$num" '
+    $1 == r && $2 == n { next }
+    { print }
+  ' "$f" > "$tmp"
+  mv "$tmp" "$f"
+  echo "unlisted $repo#$num from $f"
+}
+
+# Parse enlistment → raw rows: repo \t number \t branch \t url \t title
+wtc_pr_enlist_rows() { # <collection>
+  f="$(wtc_prs_file "$1")"
+  [ -f "$f" ] || return 0
+  awk '
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      repo=$1; num=$2; branch=""; url=""; title=""
+      if (NF >= 3 && $3 != "-") branch=$3
+      if (NF >= 4 && $4 != "-") url=$4
+      if (NF >= 5) {
+        title=$5
+        for (i=6; i<=NF; i++) title=title " " $i
+      }
+      printf "%s\t%s\t%s\t%s\t%s\n", repo, num, branch, url, title
+    }
+  ' "$f"
+}
+
+# Look up enlisted PR for a repo+branch (inline status column). Empty if none.
+wtc_pr_enlisted_for() { # <collection> <repo> <branch> -> number \t title
+  coll="$1" repo="$2" branch="$3"
+  [ -n "$branch" ] || return 0
+  wtc_pr_enlist_rows "$coll" | while IFS=$'\t' read -r r num b url title; do
+    [ "$r" = "$repo" ] || continue
+    [ "$b" = "$branch" ] || continue
+    printf '%s\t%s\n' "$num" "$title"
+    break
+  done
+}
+
+# Forge enrichment for one enlisted PR → TSV shape used by catch-up (and later
+# by status, once it moves off labels):
+#   number \t state \t checks \t merge \t review \t title \t merge_commit \t merged_on
+# state DRAFT = open draft. Slim on purpose: catch-up only ever reads column 2
+# (state). checks/merge/review/merge_commit/merged_on are left NONE/UNKNOWN/
+# none/empty rather than ported from harness's richer wtc-pr-facts.py — that
+# lives on Bitbucket's checks/review shape and buys nothing here yet. Wire it
+# up (or a GitHub-flavoured equivalent) if/when status moves onto this file.
+wtc_pr_enrich() { # <repo> <number> [fallback-title] [worktree] -> TSV line
+  repo="$1" num="$2" title="${3:-}"
+  if command -v gh >/dev/null 2>&1; then
+    IFS=$'\t' read -r slug _forge <<EOF
+$(repo_slug_and_forge "$repo" "${4:-}")
+EOF
+    [ -n "$slug" ] || slug="$repo"
+    row="$(gh pr view "$num" --repo "$slug" \
+      --json number,state,isDraft,title \
+      --jq '[(.number|tostring),
+             (if .isDraft then "DRAFT" else .state end),
+             "NONE", "UNKNOWN", "none", (.title // ""), "", ""] | @tsv' \
+      2>/dev/null || true)"
+    if [ -n "$row" ]; then
+      printf '%s\n' "$row"
+      return 0
+    fi
+  fi
+  printf '%s\tOPEN\tNONE\tUNKNOWN\tnone\t%s\t\t\n' "$num" "$title"
+}
+
+# --- collection PR label (legacy — prefer .wtc-prs above) -------------------
+# Which collection launched a PR, kept on the PR itself via a label. Status
+# still reads this (wtc_pr_label / wtc_pr_list below) until it is repointed at
+# .wtc-prs in a follow-up commit. New code — wtc-pr.sh, catch-up.sh — should
+# enlist instead of relying on this; a label is a nice-to-have cross-check,
+# not how anything finds a PR any more.
+#
+# Keeping it: it survives a retired collection (a local file does not), and a
+# server-side filter costs nothing extra once a PR already carries the label.
 
 wtc_pr_label() { # [collection] -> the label this collection's PRs carry
   name="${1:-}"

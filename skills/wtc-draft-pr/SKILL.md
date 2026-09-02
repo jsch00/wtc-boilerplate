@@ -32,8 +32,7 @@ Follow **`harness/skills/wtc-pr/SKILL.md` §1 through §5.1**, unchanged:
 Then create it as a draft:
 
 ```bash
-gh pr create --draft --base <working-branch> --title "<issue-id>: <what changed>" \
-  --label "wtc:$WTC_COLLECTION"
+gh pr create --draft --base <working-branch> --title "<issue-id>: <what changed>"
 ```
 
 Title carries the issue ID (and the tracker key if there is one), exactly as for a
@@ -41,7 +40,21 @@ ready PR. The body can be thinner — but say what the change is for and what is
 still missing, since "what's left" is the whole reason it's a draft. A
 checklist of remaining work is a good body for a draft.
 
-If a draft already exists, just push; there is nothing else to do.
+### Enlist it
+
+```bash
+gh pr view --json number --jq .number   # the number gh just created
+tools/wtc-pr.sh enlist <repo> <n> --branch <working-branch>
+```
+
+This — not a label — is how `wtc-catch-up` and (once it moves off labels)
+`wtc-status` find the PR later. A label is optional and secondary now: add one
+only if the repo's own conventions want it, never as a substitute for
+enlisting.
+
+If a draft already exists, just push; there is nothing else to do. Check
+`tools/wtc-pr.sh list` first — if it was never enlisted (an older draft, or one
+opened by hand), enlist it now rather than leaving it invisible to catch-up.
 
 ## What this skill deliberately does not do
 
