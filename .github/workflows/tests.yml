@@ -80,6 +80,38 @@ jobs:
         # this is the belt to that pair of braces.
         run: tests/run.sh < /dev/null
 
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Linux only. Coverage needs BASH_XTRACEFD, which arrived in bash 4.1, and
+    # macOS ships 3.2 — so the platform the tools target is the one that cannot
+    # measure them. The macOS leg of `suite` still runs every test; it just
+    # cannot say which lines they touched.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name  "wtc-test"
+          git config --global user.email "wtc-test@example.invalid"
+          git config --global init.defaultBranch main
+
+      - name: Measure
+        # Report only — no floor. The number is here to be read and to make a
+        # regression visible in a diff, not to be gamed into going up. Add
+        # `--min <pct>` when there is a level worth defending.
+        run: |
+          tests/coverage.sh --markdown > coverage.md
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+          cat coverage.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.md
+          retention-days: 30
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest

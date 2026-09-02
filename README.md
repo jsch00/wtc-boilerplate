@@ -65,7 +65,8 @@ different revision, with no clone duplication and no branch contention.
   `wtc-pr`, …), each one a skill file an agent loads on demand.
 - **`tests/`** — `tests/run.sh` runs the lot. No dependencies beyond bash and
   git, no network, and it builds its own throwaway workspace rather than
-  touching yours. `tests/README.md` covers what is asserted and why.
+  touching yours. `tests/coverage.sh` reports line coverage for `tools/`
+  and `hooks/`. `tests/README.md` covers what is asserted and why.
 
 ## What this repository is
 

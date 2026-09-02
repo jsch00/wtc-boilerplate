@@ -68,6 +68,43 @@ skips them on the platform the tools actually target. The skip exists so the
 suite still runs on a bare machine; CI has no excuse to take it. A green run
 that reports fewer assertions than the other platform is worth reading twice.
 
+## Coverage
+
+```bash
+tests/coverage.sh              # a table
+tests/coverage.sh --markdown   # for a CI job summary
+tests/coverage.sh --min 30     # also fail under a floor
+```
+
+Line coverage for `tools/` and `hooks/`, measured by pointing `BASH_ENV` at a
+stub that turns on `set -x` with `PS4='@@${BASH_SOURCE}:${LINENO}@@ '`. Every
+tool is a `#!/usr/bin/env bash` script, so its shell sources `BASH_ENV` on
+startup and traces itself. **Nothing on disk is modified** — injecting a
+preamble would shift every line number, and `agent-env.sh --help` prints its
+own header by line range.
+
+It runs the suite twice: once clean, which is the truth about whether the
+tests pass, and once instrumented, which is only a measurement. `set -x`
+perturbs three assertions that match on captured output, so the report states
+that delta rather than hiding it. **CI gates on the clean run**; the coverage
+job only measures, with no floor — the number is there to be read and to make
+a regression visible in a diff, not to be gamed upward.
+
+Two limits worth knowing. It needs **bash ≥ 4.1** for `BASH_XTRACEFD`, so it
+cannot run on macOS (3.2) — which means the platform the tools target is the
+one that cannot measure them; run it in a container there. And `env -i` wipes
+`BASH_ENV`, so `agent_env_test.sh`'s deliberately controlled shells are not
+traced: read `tools/agent-env.sh` as a floor (26% here, 52% when measured by
+file injection instead).
+
+Today's picture: **29% overall**, and the distribution matters more than the
+total. The paths that can destroy something are the best covered — `retire.sh`
+67%, `add-repo.sh` 57%, `link-skills.sh` 57%. The uncovered mass is terminal
+orchestration and network: `wtc-open.sh` at 3% is almost all herdr pane
+layout, and of `lib.sh`'s 62 functions the 34 unentered ones want a running
+multiplexer, an nvim socket, or GitHub. `hooks/invoke.sh` at 0% is the one
+genuinely easy gap — 14 lines, no excuse.
+
 A shellcheck job runs advisory-only (`continue-on-error`). Promote it to
 gating once its existing findings are dealt with — a check that is red on
 arrival teaches people to ignore it.
