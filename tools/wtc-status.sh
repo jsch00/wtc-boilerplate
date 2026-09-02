@@ -57,7 +57,7 @@ which is what lets you select and copy out of it. (Most terminals also have a
 modifier that bypasses mouse reporting for one drag — Option in iTerm2, Shift
 in many others — if you would rather not leave the table live.)
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -91,7 +91,7 @@ while [ $# -gt 0 ]; do
     --no-click) click=no; shift ;;
     --no-fetch) fetch=no; shift ;;
     --fetch-age) fetch_max_age="${2:?--fetch-age needs seconds}"; shift 2 ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) only="$1"; shift ;;
   esac

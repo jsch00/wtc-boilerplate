@@ -16,14 +16,14 @@ Remote branches are NEVER touched — they are the per-issue record
 go with the worktrees; anything they held that was not pushed is what the
 pre-flight refuses on.
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 force=no
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) force=yes; shift ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "unknown option: $1" >&2; usage ;;
     *) break ;;
   esac
