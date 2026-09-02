@@ -46,6 +46,25 @@ does not exist.
 reports the physical path, so an unresolved fixture path fails assertions on
 spelling rather than substance.
 
+## CI
+
+`.github/workflows/tests.yml` runs the suite on **ubuntu-latest and
+macos-latest**, for different reasons. macOS is the platform the tools target
+and the only one giving real bash 3.2 at `/bin/bash` — without it the "no bash
+4 constructs" rule is a claim nothing checks. Ubuntu catches GNU/BSD
+divergence (`stat -c` vs `stat -f`, `date` flags); the tools carry fallbacks
+for both, and an unexercised fallback is one that has already rotted.
+
+The runner closes stdin (`tests/run.sh < /dev/null`). When stdin is a socket,
+bash decides it was started by a remote shell daemon and sources `~/.bashrc`
+*instead of* `$BASH_ENV`, which silently turns the BASH_ENV coverage into a
+no-op. The tests redirect individually as well; this is the belt to those
+braces.
+
+A shellcheck job runs advisory-only (`continue-on-error`). Promote it to
+gating once its existing findings are dealt with — a check that is red on
+arrival teaches people to ignore it.
+
 ## Writing a test
 
 Source `helpers.sh`, use `it` to name a group, and assert. Files run under

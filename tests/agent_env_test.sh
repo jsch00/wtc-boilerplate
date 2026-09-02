@@ -30,7 +30,23 @@ write_cache
 
 # Run agent-env.sh with a controlled environment: no mise, a known PATH, and
 # the collection named explicitly so it never walks up into a real workspace.
-in_clean_shell() { # <bash -c script>
+#
+# `</dev/null` is load-bearing, not tidiness. When stdin is a socket, bash
+# applies its "started by a remote shell daemon" heuristic and sources
+# ~/.bashrc for a non-interactive shell *instead of* $BASH_ENV. Inheriting the
+# stdin of whatever ran the suite therefore decides whether the BASH_ENV case
+# below tests anything — which is exactly the intermittent failure that led
+# here. Closing stdin makes it deterministic.
+in_clean_shell() { # <bash -c script> — stdin closed
+  env -i HOME="$HOME" PATH=/usr/bin:/bin \
+      CLAUDE_PROJECT_DIR="$collection" \
+      /bin/bash -c "$1" </dev/null
+}
+
+# Same, but stdin passes through — for --wrap, which reads its hook payload
+# from it. A pipe is not a socket, so bash still honours BASH_ENV here; it is
+# only an inherited socket that triggers the remote-shell heuristic.
+in_clean_shell_stdin() { # <bash -c script>
   env -i HOME="$HOME" PATH=/usr/bin:/bin \
       CLAUDE_PROJECT_DIR="$collection" \
       /bin/bash -c "$1"
@@ -54,15 +70,22 @@ assert_eq "1" "$out"
 it "sourcing it is silent on stdout and stderr"
 # Anything printed here lands in the middle of whatever the shell was doing,
 # and under BASH_ENV that is every command.
-out="$(in_clean_shell ". '$agent_env' 2>&1 >/dev/null; :" 2>&1)"
+#
+# Both streams, merged at the outer capture. Writing `2>&1 >/dev/null` inside
+# would point stderr at the original stdout and *then* send stdout to
+# /dev/null — checking stderr alone, which is the half less likely to be
+# wrong.
+out="$(in_clean_shell ". '$agent_env'; :" 2>&1)"
 assert_empty "$out"
 
 it "BASH_ENV applies it to a non-interactive shell"
 # This is the case agent CLIs actually produce, and the reason the sourced
-# mode exists at all.
+# mode exists at all — with the caveat that bash only consults BASH_ENV when
+# it does not think it was started by a remote shell daemon. See
+# in_clean_shell above, and instructions/hooks-and-env.md.
 out="$(env -i HOME="$HOME" PATH=/usr/bin:/bin \
       CLAUDE_PROJECT_DIR="$collection" BASH_ENV="$agent_env" \
-      /bin/bash -c 'echo "$PATH"')"
+      /bin/bash -c 'echo "$PATH"' </dev/null)"
 assert_contains "$out" "$fake_bin/alpha"
 
 # --- PATH hygiene -----------------------------------------------------------
@@ -81,7 +104,7 @@ it "an empty PATH gains no empty element"
 # An empty element in PATH means the current directory. In something that runs
 # on every tool call that is a footgun, not a nit.
 out="$(env -i HOME="$HOME" CLAUDE_PROJECT_DIR="$collection" \
-      /bin/bash -c "unset PATH; eval \"\$(/bin/bash '$agent_env')\"; echo \":\$PATH:\"")"
+      /bin/bash -c "unset PATH; eval \"\$(/bin/bash '$agent_env')\"; echo \":\$PATH:\"" </dev/null)"
 assert_not_contains "$out" "::"
 
 # --- the cache --------------------------------------------------------------
@@ -102,19 +125,34 @@ assert_eq "$prefix" "$out"
 
 # --- the PreToolUse wrapper -------------------------------------------------
 
-it "--wrap rewrites a command to apply the prefix first"
-out="$(printf '{"tool_input":{"command":"echo hi"}}' | in_clean_shell "'$agent_env' --wrap")"
-assert_contains "$out" "updatedInput"
-assert_contains "$out" "wtc-agent-env"
+# --wrap parses its hook payload with python3, and is documented to fail open
+# without it: consume stdin, rewrite nothing, exit 0. Both halves are real
+# behaviour, so test whichever one this machine can reach rather than assuming
+# an interpreter that a minimal Linux image does not have.
+have_python3=no
+in_clean_shell "command -v python3 >/dev/null" && have_python3=yes
 
+if [ "$have_python3" = yes ]; then
+  it "--wrap rewrites a command to apply the prefix first"
+  out="$(printf '{"tool_input":{"command":"echo hi"}}' | in_clean_shell_stdin "'$agent_env' --wrap")"
+  assert_contains "$out" "updatedInput"
+  assert_contains "$out" "wtc-agent-env"
+else
+  it "--wrap fails open when python3 is missing"
+  out="$(printf '{"tool_input":{"command":"echo hi"}}' | in_clean_shell_stdin "'$agent_env' --wrap")"
+  assert_empty "$out" "no rewrite without python3"
+fi
+
+# The cases below assert that nothing is rewritten, which is equally true with
+# or without python3 — no branch needed.
 it "--wrap is idempotent on an already-wrapped command"
 already='{"tool_input":{"command":"# wtc-agent-env\neval x\necho hi"}}'
-out="$(printf '%s' "$already" | in_clean_shell "'$agent_env' --wrap")"
+out="$(printf '%s' "$already" | in_clean_shell_stdin "'$agent_env' --wrap")"
 assert_empty "$out" "no second wrap"
 
 it "--wrap no-ops on input it cannot use"
 for payload in '' 'not json at all' '{}' '{"tool_input":{}}' '{"tool_input":{"command":""}}'; do
-  out="$(printf '%s' "$payload" | in_clean_shell "'$agent_env' --wrap")"
+  out="$(printf '%s' "$payload" | in_clean_shell_stdin "'$agent_env' --wrap")"
   assert_empty "$out" "no rewrite for: ${payload:-<empty>}"
 done
 
@@ -134,5 +172,5 @@ it "sourcing it outside any collection still leaves the shell alive"
 # The other half of the `exit` bug: the early "no collection here" return was
 # also an exit, so a BASH_ENV pointed at a retired collection killed the shell.
 out="$(env -i HOME="$HOME" PATH=/usr/bin:/bin CLAUDE_PROJECT_DIR="$nowhere" \
-      /bin/bash -c ". '$agent_env'; echo STILL_ALIVE")"
+      /bin/bash -c ". '$agent_env'; echo STILL_ALIVE" </dev/null)"
 assert_eq "STILL_ALIVE" "$out"

@@ -57,7 +57,12 @@ for f in $src_scripts; do
   base="$(basename "$f")"
   # Strip comments before scanning: a comment explaining why something is
   # avoided would otherwise trip the scan that enforces avoiding it.
-  body="$(sed 's/#.*//' "$f")"
+  #
+  # Only whole-line comments and inline ones preceded by whitespace. Cutting at
+  # the first `#` on the line would eat `${remote#*github.com}` and every other
+  # prefix-strip expansion — truncating the line, and with it anything after
+  # the expansion that the scan was supposed to see.
+  body="$(sed -e 's/^[[:space:]]*#.*$//' -e 's/[[:space:]]#[^}]*$//' "$f")"
   hits=""
   case "$body" in *mapfile*)      hits="$hits mapfile" ;; esac
   case "$body" in *readarray*)    hits="$hits readarray" ;; esac

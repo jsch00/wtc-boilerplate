@@ -121,6 +121,13 @@ profile:
   precisely what an agent CLI spawns. `agent-env.sh` detects being sourced and
   applies to the calling shell silently. This is the surface that needs no hook
   trust and no per-CLI config.
+
+  It has one hole, found by the test suite. When **stdin is a socket**, bash
+  decides it was started by a remote shell daemon and sources `~/.bashrc`
+  instead of `$BASH_ENV` — silently, so the prefix simply never arrives. An
+  agent CLI that talks to its host over a socket on fd 0 is exactly that case.
+  This is why `BASH_ENV` is one of four surfaces rather than the answer: the
+  PreToolUse hook wraps the command itself and does not care what stdin is.
 * the PreToolUse hook — wraps the agent's own tool calls.
 * `.envrc` — direnv and Grok `load_envrc`.
 
